@@ -1,4 +1,5 @@
 import { syncServerClock } from "../time/server-clock";
+import { UNAVAILABLE_STATUSES, type ApiHealthReporter } from "./health";
 
 export class ApiError extends Error {
   constructor(
@@ -30,8 +31,13 @@ interface ErrorEnvelope {
  * Thin fetch wrapper for the CareOS API.
  * - Session cookie is HttpOnly and sent with `credentials: "include"`; JS never sees it.
  * - The CSRF token (from /v1/auth/login or /v1/auth/me) is kept in memory only.
+ * - Every outcome is reported to `health`, which drives the "API unavailable" banner.
  */
-export function createApiClient(baseUrl: string, fetchImpl: typeof fetch = fetch): ApiClient {
+export function createApiClient(
+  baseUrl: string,
+  fetchImpl: typeof fetch = fetch,
+  health?: ApiHealthReporter,
+): ApiClient {
   let csrfToken: string | null = null;
 
   async function request<T>(method: Method, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
@@ -51,8 +57,11 @@ export function createApiClient(baseUrl: string, fetchImpl: typeof fetch = fetch
       });
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") throw error;
+      health?.reportFailure();
       throw new ApiError(0, "network_error", "The CareOS API could not be reached.");
     }
+    if (UNAVAILABLE_STATUSES.has(response.status)) health?.reportFailure();
+    else health?.reportSuccess();
     syncServerClock(response.headers.get("date"));
 
     if (response.status === 204) return undefined as T;

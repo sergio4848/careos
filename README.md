@@ -158,14 +158,42 @@ CAREOS_PUBLIC_API_URL=http://localhost:8000 npm run dev:web
 
 ## Tests
 
+Backend tests run against a real PostgreSQL database (`CAREOS_TEST_DATABASE_URL`; its schema is
+dropped and re-migrated at the start of each run, so point it at a dedicated database). Set
+`CAREOS_TEST_REDIS_URL` to also run the real-Redis tests (skipped otherwise; CI runs them).
+
 ```bash
-# Backend: unit + integration tests against real PostgreSQL
-docker compose run --rm api pytest
-docker compose run --rm api pytest tests/integration/test_sprint1_acceptance.py -v
+# Backend (apps/backend) — the same steps CI runs
+pip install -e ".[dev]"
+ruff check . && ruff format --check .
+mypy
+alembic upgrade head && alembic downgrade base && alembic upgrade head && alembic check
+pytest tests/unit
+export CAREOS_TEST_DATABASE_URL=postgresql+asyncpg://careos:careos@localhost:5432/careos_test
+export CAREOS_TEST_REDIS_URL=redis://localhost:6379/15   # optional
+pytest tests/integration
+
+# Contracts are generated, never edited (repository root)
+(cd apps/backend && python -m careos.cli export-contracts) && npm run contracts:generate
+git diff --exit-code -- packages/contracts
 
 # Web: lint, types, component tests, production build (repository root)
 npm ci && npm run lint && npm run typecheck && npm run test && npm run build:web
+
+# Everything inside Docker
+docker compose run --rm api pytest
 ```
+
+Reliability suites (technical review hardening):
+
+| Suite | Proves |
+|---|---|
+| `tests/integration/test_failure_injection.py` | SOS persisted and escalated with Redis unreachable; broker raising/hanging never fails or delays a committed SOS; AI hanging/raising never blocks or changes an incident; voice (error, SDK exception, hang) and SMS failures are recorded and escalate to humans; worker crash + 10 min downtime recovers in policy order; same `event_id` ×8 concurrently → one receipt, one incident; 8 distinct SOS concurrently from one device → one active incident, gap-free timeline; crash before commit leaves nothing behind |
+| `tests/integration/test_safety_invariants.py` | CLOSED cannot reopen (API, ORM, raw SQL, forged event); every status change is in the timeline (enforced at commit); assignments cannot cross tenants and only one is active; duplicate `event_id` refused by the database; organisation consistency of incidents/events/receipts; resolved ≠ closed; AI cannot change status; providers/automation cannot record human outcomes; takeover/resolution/closure audited with actor and tenant |
+| `tests/integration/test_security_regression.py` | For 14 endpoints, another organisation's real identifiers get responses identical to random identifiers; lists, counts, dashboard and audit unchanged by another tenant's activity; gateway keys cannot reach other tenants' devices; WebSocket events never cross organisations |
+| `tests/integration/test_observability.py` | safety metrics move exactly as expected and are exposed; logs carry request, incident, organisation, event, provider and failure category; no passwords, tokens, gateway secrets, cookies or service-user PII in logs, including database error details |
+| `tests/unit/test_reliability_primitives.py` | circuit breaker; Redis fallbacks; Unit of Work after-commit semantics |
+| `apps/web/src/lib/realtime/connection.test.ts` and banner/freshness tests | reconnect state machine, bounded backoff, REST refresh after reconnect, dead-socket watchdog, API-unavailable / stale-data / escalation-delay notices |
 
 Sprint 1 acceptance tests (`apps/backend/tests/integration/test_sprint1_acceptance.py`):
 
@@ -212,10 +240,15 @@ no new incident*; signing in as `operator@northshire.example.com` shows no Demo 
 
 ## Known limitations
 
-* **Docker Compose stack not yet run end to end.** Everything was verified on a local
-  PostgreSQL 16 without Docker (API with embedded worker, Next.js production build, automated E2E
-  script). The compose files are validated with `docker compose config` only; the CI `docker` job
-  will be the first full run.
+* **Reliability model:** see [docs/architecture/reliability.md](docs/architecture/reliability.md).
+  Provider calls are at-least-once (a worker crash between a call and recording its result can
+  repeat the call). Realtime delivery is best-effort; consoles reconcile over REST within 30 s
+  (10 s when live updates are down). Escalation timing is bounded by the worker poll interval
+  and, after a worker crash, by the 60 s lease.
+* **Redis outage with several API replicas:** consoles connected to a replica other than the one
+  that accepted the SOS see it through REST reconciliation (≤10 s), not instantly.
+* **Docker is not available on the development machine used so far**; the Compose stack is
+  verified in the CI `docker` job (build, `--wait` health, smoke test, tests inside the image).
 * **No browser automation tests.** The UI is covered by component tests (Vitest) and an
   API + WebSocket end-to-end script; there are no Playwright tests yet.
 * **Mock providers only.** No real voice, SMS or AI; mock calls always report "no answer" by

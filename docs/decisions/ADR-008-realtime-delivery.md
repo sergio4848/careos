@@ -30,3 +30,24 @@ that bypasses authorisation.
 * Redis is not on the critical path of alarm ingestion or escalation.
 * Server-Sent Events would also work; WebSocket was chosen for future bidirectional features
   (operator presence, live call control).
+
+## Update · 2026-09-17 (hardening review, see ADR-012)
+
+* **Bounded, contained publishing.** After-commit publishing can no longer fail or slow a
+  committed request: every exception is caught and counted
+  (`careos_realtime_delivery_failures_total{stage}`), and each message is bounded by
+  `CAREOS_REALTIME_PUBLISH_TIMEOUT_SECONDS` (1 s). Previously an unexpected broker error returned
+  HTTP 500 for an SOS that had already been stored, and an unreachable Redis added ~2 s per message.
+* **Redis circuit breaker.** Redis timeouts are 0.5 s; after a failure the broker and rate limiter
+  skip Redis for 5 s (local delivery / per-process limits) and then probe once. `/ready` exposes
+  `redis` and `realtime` state and does not fail readiness for Redis.
+* **Client state machine.** `RealtimeConnection` (framework-independent, unit tested):
+  `connecting → live → disconnected → reconnecting → live`, terminal `unauthorised`. Bounded
+  exponential backoff with jitter (1 s → 30 s), immediate retry on the browser `online` event or
+  the operator's "Reconnect now", and a watchdog that treats 60 s without traffic as a dead socket.
+* **Reconciliation while live.** Queries refetch from REST every 30 s even when live (a lost
+  notification is corrected within 30 s), every 10 s when not live, and all queries refetch on
+  every (re)connect.
+* **Operator-visible degradation.** Banners for API unreachable, live updates interrupted /
+  reconnecting, stale data (> 30 s) and delayed escalation.
+

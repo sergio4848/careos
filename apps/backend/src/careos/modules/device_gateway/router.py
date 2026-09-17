@@ -60,6 +60,6 @@ async def ingest_event(
     context: AuditContextDep,
     gateway_key: Annotated[str | None, Security(gateway_key_scheme)],
 ) -> IngestResponse:
-    credential = await service.authenticate(uow.session, gateway_key, context)
+    credential = await service.authenticate(uow.session, gateway_key, context, adapter)
     result = await service.ingest(uow, credential, adapter, payload, context)
     return IngestResponse(**asdict(result))

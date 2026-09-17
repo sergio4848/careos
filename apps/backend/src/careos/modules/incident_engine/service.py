@@ -27,7 +27,8 @@ from careos.core.errors import (
     InvalidStateTransitionError,
     NotFoundError,
 )
-from careos.core.metrics import INCIDENTS_CREATED
+from careos.core.logging import get_logger
+from careos.core.metrics import INCIDENT_RESOLUTIONS, INCIDENT_TAKEOVERS, INCIDENTS_CREATED
 from careos.core.time import utcnow
 from careos.db.uow import UnitOfWork
 from careos.modules.audit import service as audit
@@ -55,6 +56,8 @@ from careos.modules.incident_engine.state_machine import (
     assert_transition,
 )
 from careos.modules.service_users.models import ServiceUser, ServiceUserStatus
+
+log = get_logger(__name__)
 
 _TRIGGER_PRIORITY: dict[DeviceEventType, IncidentPriority] = {
     DeviceEventType.SOS_BUTTON: IncidentPriority.CRITICAL,
@@ -341,7 +344,22 @@ class IncidentEngine:
             ),
             None,
         )
-        INCIDENTS_CREATED.labels(incident.trigger_type, incident.priority.value).inc()
+        trigger_type, priority = incident.trigger_type, incident.priority.value
+        created_log = {
+            "incident_id": str(incident.id),
+            "organisation_id": str(incident.organisation_id),
+            "event_id": event.event_id,
+            "trigger_type": trigger_type,
+            "priority": priority,
+            "escalation_steps": len(steps),
+            "fail_safe": use_fallback,
+        }
+
+        def _created() -> None:
+            INCIDENTS_CREATED.labels(trigger_type, priority).inc()
+            log.info("incident.created", **created_log)
+
+        uow.after_commit(_created)
         self.notify(uow, incident, RealtimeMessageType.INCIDENT_CREATED, "INCIDENT_CREATED")
         return DeviceEventOutcome(ReceiptOutcome.INCIDENT_CREATED, incident)
 
@@ -384,6 +402,7 @@ class IncidentEngine:
         session = uow.session
         incident = await self.lock(session, principal.tenant_id, incident_id)
         if incident.status not in TAKEOVER_STATUSES:
+            INCIDENT_TAKEOVERS.labels("invalid_state").inc()
             raise InvalidStateTransitionError(
                 f"An incident in status {incident.status.value} cannot be taken over."
             )
@@ -395,7 +414,14 @@ class IncidentEngine:
         )
         if current is not None:
             if current.user_id == principal.user_id:
+                INCIDENT_TAKEOVERS.labels("already_owner").inc()
                 return incident  # idempotent retry by the owner
+            INCIDENT_TAKEOVERS.labels("conflict").inc()
+            log.info(
+                "incident.takeover_conflict",
+                incident_id=str(incident.id),
+                organisation_id=str(incident.organisation_id),
+            )
             raise IncidentAlreadyAssignedError(details={"assigned_user_id": str(current.user_id)})
 
         now = utcnow()
@@ -438,7 +464,20 @@ class IncidentEngine:
             await session.flush()
         except IntegrityError as exc:  # partial unique index: belt and braces behind the row lock
             await uow.rollback()
+            INCIDENT_TAKEOVERS.labels("conflict").inc()
             raise IncidentAlreadyAssignedError() from exc
+        taken_log = {
+            "incident_id": str(incident.id),
+            "organisation_id": str(incident.organisation_id),
+            "user_id": str(principal.user_id),
+            "from_status": previous.value,
+        }
+
+        def _taken() -> None:
+            INCIDENT_TAKEOVERS.labels("assigned").inc()
+            log.info("incident.taken_over", **taken_log)
+
+        uow.after_commit(_taken)
         self.notify(uow, incident, RealtimeMessageType.INCIDENT_UPDATED, "OPERATOR_TAKEOVER")
         await uow.commit()
         return incident
@@ -493,6 +532,19 @@ class IncidentEngine:
         self._audit_status(
             session, principal, incident, AuditAction.INCIDENT_RESOLVED, previous, context
         )
+        resolved_log = {
+            "incident_id": str(incident.id),
+            "organisation_id": str(incident.organisation_id),
+            "user_id": str(principal.user_id),
+            "category": category.value,
+            "from_status": previous.value,
+        }
+
+        def _resolved() -> None:
+            INCIDENT_RESOLUTIONS.labels(category.value).inc()
+            log.info("incident.resolved", **resolved_log)
+
+        uow.after_commit(_resolved)
         self.notify(uow, incident, RealtimeMessageType.INCIDENT_UPDATED, "INCIDENT_RESOLVED")
         await uow.commit()
         return incident
@@ -542,6 +594,12 @@ class IncidentEngine:
         self._audit_status(
             session, principal, incident, AuditAction.INCIDENT_CLOSED, previous, context
         )
+        closed_log = {
+            "incident_id": str(incident.id),
+            "organisation_id": str(incident.organisation_id),
+            "user_id": str(principal.user_id),
+        }
+        uow.after_commit(lambda: log.info("incident.closed", **closed_log))
         self.notify(uow, incident, RealtimeMessageType.INCIDENT_UPDATED, "INCIDENT_CLOSED")
         await uow.commit()
         return incident

@@ -31,11 +31,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Ready
-         * @description Readiness: PostgreSQL is required. Redis only degrades realtime fan-out, so it is reported
-         *     but does not fail readiness (incident handling works without it).
-         */
+        /** Ready */
         get: operations["ready_ready_get"];
         put?: never;
         post?: never;
@@ -605,6 +601,8 @@ export interface components {
             devices_offline: number;
             /** Devices Online */
             devices_online: number;
+            /** Escalation Overdue */
+            escalation_overdue: number;
             /** Low Battery */
             low_battery: number;
             /** Unacknowledged */
@@ -966,10 +964,27 @@ export interface components {
              */
             database: "ok" | "unavailable";
             /**
+             * Escalation Worker
+             * @enum {string}
+             */
+            escalation_worker: "ok" | "lagging" | "unknown";
+            /** Expected Schema Revision */
+            expected_schema_revision: string;
+            /**
+             * Migrations
+             * @enum {string}
+             */
+            migrations: "current" | "ahead" | "outdated" | "unknown";
+            /**
+             * Realtime
+             * @enum {string}
+             */
+            realtime: "ok" | "degraded" | "local_only";
+            /**
              * Redis
              * @enum {string}
              */
-            redis: "ok" | "degraded" | "not_configured";
+            redis: "ok" | "unavailable" | "not_configured";
             /**
              * Status
              * @enum {string}

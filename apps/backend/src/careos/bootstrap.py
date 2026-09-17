@@ -13,6 +13,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from careos.contracts.realtime import RealtimePublisher
+from careos.core.circuit import CircuitBreaker
 from careos.core.config import Settings
 from careos.core.rate_limit import InMemoryRateLimiter, RateLimiter, RedisRateLimiter
 from careos.db.session import create_engine, create_session_factory
@@ -79,11 +80,17 @@ class Container:
     providers: ProviderRegistry
     adapters: AdapterRegistry
     auth: AuthService
+    #: Shared by everything that uses Redis, so one failure makes all of them skip it at once.
+    redis_circuit: CircuitBreaker | None = None
     #: Transport the SOS simulator uses to reach the gateway (overridden in tests).
     simulator_transport: httpx.AsyncBaseTransport | None = None
 
     def uow(self, session: AsyncSession) -> UnitOfWork:
-        return UnitOfWork(session, self.realtime)
+        return UnitOfWork(
+            session,
+            self.realtime,
+            publish_timeout_seconds=self.settings.realtime_publish_timeout_seconds,
+        )
 
     async def aclose(self) -> None:
         await self.engine.dispose()
@@ -104,16 +111,20 @@ def build_container(
     if redis is None and settings.redis_url:
         redis = Redis.from_url(
             settings.redis_url,
-            socket_timeout=2,
-            socket_connect_timeout=2,
+            socket_timeout=settings.redis_timeout_seconds,
+            socket_connect_timeout=settings.redis_timeout_seconds,
             health_check_interval=30,
         )
     hub = ConnectionHub() if with_hub else None
     realtime: RealtimePublisher
     rate_limiter: RateLimiter
+    redis_circuit: CircuitBreaker | None = None
     if redis is not None:
-        realtime = RedisRealtimeBroker(redis, hub)
-        rate_limiter = RedisRateLimiter(redis)
+        redis_circuit = CircuitBreaker(
+            "redis", reset_after_seconds=settings.redis_circuit_reset_seconds
+        )
+        realtime = RedisRealtimeBroker(redis, hub, redis_circuit)
+        rate_limiter = RedisRateLimiter(redis, circuit=redis_circuit)
     else:
         realtime = LocalRealtimeBroker(hub)
         rate_limiter = InMemoryRateLimiter()
@@ -128,4 +139,5 @@ def build_container(
         providers=providers or build_providers(settings),
         adapters=default_adapters(),
         auth=AuthService(settings, rate_limiter, session_factory),
+        redis_circuit=redis_circuit,
     )

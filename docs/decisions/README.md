@@ -16,3 +16,5 @@ A superseded ADR is kept and marked, never deleted.
 | [009](ADR-009-server-side-sessions.md) | Server-side sessions instead of JWT for the console | Accepted |
 | [010](ADR-010-incident-state-machine.md) | Centralised incident state machine and append-only timeline | Accepted |
 | [011](ADR-011-dependency-policy.md) | Dependency and version policy | Accepted |
+| [012](ADR-012-transaction-boundaries-and-outbox.md) | Transaction boundaries, after-commit side effects and the outbox | Accepted |
+| [013](ADR-013-database-enforced-incident-invariants.md) | Database-enforced incident invariants | Accepted |

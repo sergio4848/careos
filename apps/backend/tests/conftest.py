@@ -105,7 +105,11 @@ async def container(
 ) -> AsyncIterator[Container]:
     built = build_container(settings, with_hub=True, providers=providers)
     async with built.engine.begin() as connection:
-        tables = ", ".join(f'"{table.name}"' for table in reversed(metadata.sorted_tables))
+        tables = ", ".join(
+            f'"{table.name}"'
+            for table in reversed(metadata.sorted_tables)
+            if not table.info.get("reference_data")  # seeded by migrations, never truncated
+        )
         await connection.execute(text(f"TRUNCATE TABLE {tables} RESTART IDENTITY CASCADE"))
     yield built
     await built.aclose()

@@ -29,12 +29,19 @@ jobs:
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U careos" --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:8-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 20
     env:
       CAREOS_ENVIRONMENT: test
       CAREOS_SECRET_KEY: ci-only-secret-key-0123456789-0123456789
       CAREOS_DATABASE_URL: postgresql+asyncpg://careos:careos-ci@localhost:5432/careos
       CAREOS_TEST_DATABASE_URL: postgresql+asyncpg://careos:careos-ci@localhost:5432/careos_test
       CAREOS_REDIS_URL: ""
+      # Real Redis for tests/integration/test_redis_integration.py (skipped when unset).
+      CAREOS_TEST_REDIS_URL: redis://localhost:6379/15
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -66,8 +73,10 @@ jobs:
         run: |
           python -m careos.cli seed-demo
           python -m careos.cli seed-demo
-      - name: Tests
-        run: pytest --cov --cov-report=term-missing:skip-covered
+      - name: Unit tests
+        run: pytest tests/unit --cov --cov-report=
+      - name: Integration tests (PostgreSQL + Redis, failure injection, invariants, security)
+        run: pytest tests/integration --cov --cov-append --cov-report=term-missing:skip-covered
 
   contracts:
     name: Contracts · generated artefacts are current

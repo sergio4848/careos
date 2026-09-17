@@ -132,6 +132,11 @@ class ScheduledAction(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
             ondelete="RESTRICT",
         ),
         UniqueConstraint("incident_id", "step_order", name="uq_scheduled_actions_incident_step"),
+        CheckConstraint("attempts >= 0 AND max_attempts >= 1", name="attempts_valid"),
+        CheckConstraint(
+            "status <> 'RUNNING' OR (lease_expires_at IS NOT NULL AND locked_by IS NOT NULL)",
+            name="running_has_lease",
+        ),
         Index(
             "ix_scheduled_actions_due",
             "due_at",

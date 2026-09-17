@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from careos.core.logging import get_logger
-from careos.core.metrics import PROVIDER_CALLS
+from careos.core.metrics import AI_TIMEOUTS, PROVIDER_CALLS, PROVIDER_FAILURES
 
 log = get_logger(__name__)
 
@@ -100,10 +100,27 @@ class AIOrchestrator:
                 result = await self._provider.assist_check_in(context)
         except TimeoutError:
             PROVIDER_CALLS.labels("ai", name, "timeout").inc()
+            PROVIDER_FAILURES.labels("ai", name, "timeout").inc()
+            AI_TIMEOUTS.labels(name).inc()
+            log.warning(
+                "ai.check_in_failed",
+                provider=name,
+                failure_category="timeout",
+                incident_id=str(context.incident_id),
+                organisation_id=str(context.organisation_id),
+            )
             return AIOutcome(ok=False, provider=name, timed_out=True, error="timeout")
         except Exception as exc:  # isolate ANY AI failure from the incident workflow
             PROVIDER_CALLS.labels("ai", name, "error").inc()
-            log.warning("ai.check_in_failed", provider=name, error=type(exc).__name__)
+            PROVIDER_FAILURES.labels("ai", name, "provider_error").inc()
+            log.warning(
+                "ai.check_in_failed",
+                provider=name,
+                failure_category="provider_error",
+                error_type=type(exc).__name__,
+                incident_id=str(context.incident_id),
+                organisation_id=str(context.organisation_id),
+            )
             return AIOutcome(ok=False, provider=name, error=type(exc).__name__)
         PROVIDER_CALLS.labels("ai", name, "ok").inc()
         return AIOutcome(
