@@ -49,6 +49,10 @@ class ReadinessStatus(BaseModel):
     redis: Literal["ok", "unavailable", "not_configured"]
     realtime: Literal["ok", "degraded", "local_only"]
     escalation_worker: Literal["ok", "lagging", "unknown"]
+    #: Degradable capabilities: their outage never removes the SOS ingestion API from
+    #: service (docs/architecture/reliability.md).
+    telephony: Literal["mock", "disabled", "twilio_simulated", "twilio_live"]
+    ai_voice: Literal["mock", "disabled", "openai_realtime"]
 
 
 @router.get("/health", response_model=HealthStatus)
@@ -121,6 +125,11 @@ async def ready(container: ContainerDep) -> Response:
 
     redis = await _redis_state(container)
     realtime = getattr(container.realtime, "state", "local_only")
+    settings = container.settings
+    if settings.voice_provider == "twilio":
+        telephony = "twilio_live" if settings.real_telephony_enabled else "twilio_simulated"
+    else:
+        telephony = settings.voice_provider
     is_ready = database == "ok" and is_safe(migrations)
     body = ReadinessStatus(
         status="ready" if is_ready else "not_ready",
@@ -130,6 +139,8 @@ async def ready(container: ContainerDep) -> Response:
         redis=redis,
         realtime=realtime,
         escalation_worker=worker,
+        telephony=telephony,
+        ai_voice=settings.ai_voice_provider,
     )
     return JSONResponse(body.model_dump(), status_code=200 if is_ready else 503)
 

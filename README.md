@@ -210,6 +210,46 @@ Sprint 1 acceptance tests (`apps/backend/tests/integration/test_sprint1_acceptan
 | `test_incident_event_timeline` | ordered sequence, required events, append-only |
 | `test_audit_log_created` | required audit codes, read restricted, immutable |
 
+## Real Voice Development Setup
+
+By default CareOS runs entirely on **mock providers**: `docker compose up` works with no
+Twilio account, no OpenAI key and no public domain, and CI never contacts a real API.
+Real calling is an explicit, allowlisted opt-in.
+
+**Requirements for real calls**
+
+| Concept | Setting |
+|---|---|
+| Master safety switch | `CAREOS_REAL_TELEPHONY_ENABLED=true` (default `false`: Twilio is never contacted) |
+| Development allowlist | `CAREOS_TELEPHONY_ALLOWED_NUMBERS=+44…` — outside production, only these E.164 numbers can be called (required, never commit personal numbers) |
+| Twilio | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `TWILIO_REGION` (default `ie1`), `TWILIO_EDGE` (default `dublin`) |
+| Public HTTPS/WSS | `CAREOS_TWILIO_WEBHOOK_BASE_URL=https://…` — Twilio must reach `POST /v1/providers/twilio/voice/status|gather` and `wss://…/v1/providers/twilio/media` (use a tunnel such as `ngrok http 8000` or `cloudflared` in development) |
+| Voice provider | `CAREOS_VOICE_PROVIDER=twilio` (default `mock`) |
+| AI voice | `CAREOS_AI_VOICE_PROVIDER=openai_realtime` with `OPENAI_API_KEY`, `OPENAI_REALTIME_MODEL` (default stays `mock`: a scripted assistant, no network) |
+
+**Test mode (no cloud accounts).** Keep every default: the mock voice provider resolves
+calls instantly, the mock AI voice assistant runs the same media-bridge code path, and the
+whole Sprint 2 flow is exercised by `pytest tests/integration/test_voice_escalation_flow.py`.
+
+**Real-call demo** (after configuring the table above and `alembic upgrade head`):
+
+1. Put *your own* phone number in `CAREOS_TELEPHONY_ALLOWED_NUMBERS` and set it as the demo
+   service user's number.
+2. Start the stack, open the dashboard, and press **SEND TEST SOS** in the simulator.
+3. At T+0 your phone rings from `TWILIO_FROM_NUMBER`; the automated assistant introduces
+   itself as automated, listens, and says it will connect your care team. Say
+   *"Yes, I need someone to help me."*
+4. The incident page shows the live call (CALLING → RINGING → CONNECTED → ENDED), the
+   structured advisory under **AI ADVISORY — HUMAN REVIEW REQUIRED**, urgency
+   `ASSISTANCE_REQUESTED`, and the incident stays active until you **Take over** and
+   resolve it manually.
+
+**Security caveats.** The webhook/media endpoints must be reachable *only* via the HTTPS
+base you configure; callbacks are verified against `X-Twilio-Signature` and media streams
+against single-use tokens, but do not expose a development tunnel longer than needed. Raw
+audio, recordings and transcripts are never stored (ADR-018). Never commit `.env`,
+credentials or personal numbers.
+
 ## API docs
 
 * Swagger UI: <http://localhost:8000/docs> · ReDoc: <http://localhost:8000/redoc> (disabled in staging/production)
@@ -251,8 +291,14 @@ no new incident*; signing in as `operator@northshire.example.com` shows no Demo 
   verified in the CI `docker` job (build, `--wait` health, smoke test, tests inside the image).
 * **No browser automation tests.** The UI is covered by component tests (Vitest) and an
   API + WebSocket end-to-end script; there are no Playwright tests yet.
-* **Mock providers only.** No real voice, SMS or AI; mock calls always report "no answer" by
-  default (`CAREOS_MOCK_VOICE_OUTCOME`).
+* **Real voice/AI needs opt-in configuration.** Twilio calling and the OpenAI Realtime
+  assistant exist behind `CAREOS_REAL_TELEPHONY_ENABLED` + an allowlist (see
+  *Real Voice Development Setup*); CI and default deployments run mocks. Live Twilio/OpenAI
+  integration has not yet been exercised against the real services from this development
+  machine (no public HTTPS endpoint here); the protocol layers are covered by contract-level
+  fakes. SMS remains mock-only.
+* **Voice concurrency**: one worker slot is held for a call's duration (bounded by
+  `CAREOS_VOICE_CALL_MAX_DURATION_SECONDS`); fine for telecare volumes (ADR-014).
 * **Management through the API only.** Users, service users, contacts, devices and escalation
   policies have REST endpoints but no admin screens.
 * **Authentication is email + password sessions.** No MFA or SSO; no password reset flow.

@@ -7,6 +7,7 @@ import { useState } from "react";
 import { EscalationPlan } from "@/components/incidents/EscalationPlan";
 import { ElapsedTimer } from "@/components/incidents/ElapsedTimer";
 import { Timeline } from "@/components/incidents/Timeline";
+import { VoiceEscalationPanel } from "@/components/incidents/VoiceEscalationPanel";
 import { describeActionError, useIncidentActions } from "@/components/incidents/useIncidentActions";
 import { PriorityBadge, StatusBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -183,7 +184,8 @@ export default function IncidentPage() {
           )}
         </Panel>
         <div className={styles.column}>
-          <Panel id="escalation" title="Escalation plan (mock providers)">
+          <VoiceEscalationPanel incidentId={data.id} canControl={can("incidents:takeover") && data.is_active} />
+          <Panel id="escalation" title="Escalation plan">
             {data.escalation.length ? <EscalationPlan steps={data.escalation} /> : <EmptyState>No steps.</EmptyState>}
           </Panel>
           {can("audit:read") ? (

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 
 from careos.api.deps import AuditContextDep, ContainerDep, SessionDep, UowDep, require
 from careos.modules.audit import service as audit
@@ -19,6 +19,8 @@ from careos.modules.incident_engine.schemas import (
     ResolveIncidentRequest,
 )
 from careos.modules.incident_engine.service import IncidentEngine
+from careos.modules.telephony import service as telephony_service
+from careos.modules.telephony.service import VoiceCallView
 
 router = APIRouter(prefix="/v1/incidents", tags=["incidents"])
 
@@ -94,6 +96,65 @@ async def resolve(
         uow, principal, incident_id, category=body.category, notes=body.notes, context=context
     )
     return await queries.get_detail(uow.session, principal, incident_id)
+
+
+@router.get(
+    "/{incident_id}/calls",
+    response_model=list[VoiceCallView],
+    summary="Voice escalation calls for an incident",
+    description=(
+        "Automated call attempts with their provider status and, when an AI voice session "
+        "ran, its structured advisory. Advisory data is decision support only and is "
+        "always labelled for human review."
+    ),
+)
+async def list_calls(
+    incident_id: uuid.UUID,
+    principal: Annotated[Principal, Depends(require(Permission.INCIDENTS_READ))],
+    session: SessionDep,
+) -> list[VoiceCallView]:
+    return await telephony_service.list_incident_calls(session, principal, incident_id)
+
+
+@router.post(
+    "/{incident_id}/calls/{call_id}/stop",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Stop an automated call",
+)
+async def stop_call(
+    incident_id: uuid.UUID,
+    call_id: uuid.UUID,
+    principal: Annotated[Principal, Depends(require(Permission.INCIDENTS_TAKEOVER))],
+    uow: UowDep,
+    container: ContainerDep,
+    context: AuditContextDep,
+) -> None:
+    await telephony_service.stop_automated_call(
+        uow,
+        principal,
+        incident_id,
+        call_id,
+        voice_provider=container.providers.voice,
+        context=context,
+    )
+
+
+@router.post(
+    "/{incident_id}/escalate-now",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Escalate now",
+    description="Brings the operator-alert escalation step forward to run immediately.",
+)
+async def escalate_now(
+    incident_id: uuid.UUID,
+    principal: Annotated[Principal, Depends(require(Permission.INCIDENTS_TAKEOVER))],
+    uow: UowDep,
+    context: AuditContextDep,
+) -> dict[str, int]:
+    accelerated = await telephony_service.accelerate_operator_escalation(
+        uow, principal, incident_id, context=context
+    )
+    return {"accelerated_steps": accelerated}
 
 
 @router.post("/{incident_id}/close", response_model=IncidentDetail)

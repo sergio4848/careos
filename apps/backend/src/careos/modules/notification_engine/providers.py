@@ -23,6 +23,8 @@ class VoiceCallOutcome(StrEnum):
     ANSWERED = "ANSWERED"
     NO_ANSWER = "NO_ANSWER"
     BUSY = "BUSY"
+    CANCELLED = "CANCELLED"
+    TIMED_OUT = "TIMED_OUT"
 
 
 CallPurpose = Literal["AUTOMATED_WELFARE_CHECK", "TRUSTED_CONTACT_ALERT"]
@@ -36,6 +38,10 @@ class VoiceCallRequest:
     to_number: str
     purpose: CallPurpose
     language: str = "en-GB"
+    #: Single-use secret linking the Twilio media stream to this call (welfare calls only).
+    media_token: str | None = None
+    #: Spoken to a trusted contact: "an active safety alert for {subject_name}".
+    subject_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +53,16 @@ class VoiceCallResult:
 
 
 class VoiceProvider(Protocol):
+    """``place_call`` returns only when the call is over (bounded by the executor).
+
+    Optional attributes real providers may add:
+
+    * ``carries_ai_session`` — the provider runs the AI conversation inside the call
+      (media bridge); the executor must not start a second out-of-band check-in.
+    * ``operation_deadline_seconds`` — how long the executor should allow for one call.
+    * ``cancel_call(provider_call_sid)`` — best-effort hangup for operator STOP.
+    """
+
     name: str
 
     async def place_call(self, request: VoiceCallRequest) -> VoiceCallResult: ...

@@ -11,6 +11,7 @@ from careos.modules.incident_engine import models as incident_models
 from careos.modules.notification_engine import models as notification_models
 from careos.modules.organisations import models as organisation_models
 from careos.modules.service_users import models as service_user_models
+from careos.modules.telephony import models as telephony_models
 
 __all__ = [
     "Base",
@@ -24,6 +25,7 @@ __all__ = [
     "notification_models",
     "organisation_models",
     "service_user_models",
+    "telephony_models",
 ]
 
 metadata = Base.metadata

@@ -236,6 +236,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/incidents/{incident_id}/calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Voice escalation calls for an incident
+         * @description Automated call attempts with their provider status and, when an AI voice session ran, its structured advisory. Advisory data is decision support only and is always labelled for human review.
+         */
+        get: operations["list_calls_v1_incidents__incident_id__calls_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/incidents/{incident_id}/calls/{call_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop an automated call */
+        post: operations["stop_call_v1_incidents__incident_id__calls__call_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/incidents/{incident_id}/close": {
         parameters: {
             query?: never;
@@ -247,6 +284,26 @@ export interface paths {
         put?: never;
         /** Close */
         post: operations["close_v1_incidents__incident_id__close_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/incidents/{incident_id}/escalate-now": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Escalate now
+         * @description Brings the operator-alert escalation step forward to run immediately.
+         */
+        post: operations["escalate_now_v1_incidents__incident_id__escalate_now_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -466,6 +523,11 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AISessionStatus
+         * @enum {string}
+         */
+        AISessionStatus: "STARTED" | "COMPLETED" | "FAILED" | "TIMED_OUT";
+        /**
          * ActorType
          * @enum {string}
          */
@@ -509,6 +571,17 @@ export interface components {
          * @enum {string}
          */
         AuditOutcome: "SUCCESS" | "FAILURE" | "DENIED";
+        /**
+         * CallStatus
+         * @description CareOS-internal call lifecycle. Provider states are mapped, never exposed.
+         * @enum {string}
+         */
+        CallStatus: "QUEUED" | "INITIATED" | "RINGING" | "ANSWERED" | "IN_PROGRESS" | "COMPLETED" | "NO_ANSWER" | "BUSY" | "FAILED" | "CANCELLED" | "TIMED_OUT";
+        /**
+         * CallTargetType
+         * @enum {string}
+         */
+        CallTargetType: "SERVICE_USER" | "TRUSTED_CONTACT";
         /** ChangeRoleRequest */
         ChangeRoleRequest: {
             role: components["schemas"]["Role"];
@@ -799,7 +872,7 @@ export interface components {
          * IncidentEventType
          * @enum {string}
          */
-        IncidentEventType: "SOS_RECEIVED" | "FALL_RECEIVED" | "DEVICE_FAULT_RECEIVED" | "ALARM_REPEATED" | "INCIDENT_CREATED" | "VALIDATION_STARTED" | "VALIDATION_WARNING" | "INCIDENT_OPENED" | "PRIORITY_CHANGED" | "ESCALATION_SCHEDULED" | "ESCALATION_STEP_SKIPPED" | "ESCALATION_STEP_FAILED" | "ESCALATION_HALTED" | "AUTOMATED_CALL_STARTED" | "AUTOMATED_CALL_NO_ANSWER" | "AUTOMATED_CALL_ANSWERED" | "AI_CALL_STARTED" | "AI_CALL_COMPLETED" | "AI_CALL_FAILED" | "TRUSTED_CONTACT_CALLED" | "TRUSTED_CONTACT_NO_ANSWER" | "TRUSTED_CONTACT_NOTIFIED" | "CONTACT_ACKNOWLEDGED" | "CALL_FAILED" | "NOTIFICATION_FAILED" | "OPERATORS_ALERTED" | "OPERATOR_TAKEOVER" | "INCIDENT_RESOLVED" | "INCIDENT_CLOSED";
+        IncidentEventType: "SOS_RECEIVED" | "FALL_RECEIVED" | "DEVICE_FAULT_RECEIVED" | "ALARM_REPEATED" | "INCIDENT_CREATED" | "VALIDATION_STARTED" | "VALIDATION_WARNING" | "INCIDENT_OPENED" | "PRIORITY_CHANGED" | "ESCALATION_SCHEDULED" | "ESCALATION_STEP_SKIPPED" | "ESCALATION_STEP_FAILED" | "ESCALATION_HALTED" | "AUTOMATED_CALL_STARTED" | "AUTOMATED_CALL_NO_ANSWER" | "AUTOMATED_CALL_ANSWERED" | "AI_CALL_STARTED" | "AI_CALL_COMPLETED" | "AI_CALL_FAILED" | "TRUSTED_CONTACT_CALLED" | "TRUSTED_CONTACT_NO_ANSWER" | "TRUSTED_CONTACT_NOTIFIED" | "CONTACT_ACKNOWLEDGED" | "CALL_FAILED" | "NOTIFICATION_FAILED" | "OPERATORS_ALERTED" | "AUTOMATED_CALL_CANCELLED" | "OPERATOR_ESCALATION_REQUESTED" | "OPERATOR_TAKEOVER" | "INCIDENT_RESOLVED" | "INCIDENT_CLOSED";
         /** IncidentEventView */
         IncidentEventView: {
             actor: components["schemas"]["PersonRef"] | null;
@@ -959,6 +1032,11 @@ export interface components {
         /** ReadinessStatus */
         ReadinessStatus: {
             /**
+             * Ai Voice
+             * @enum {string}
+             */
+            ai_voice: "mock" | "disabled" | "openai_realtime";
+            /**
              * Database
              * @enum {string}
              */
@@ -990,6 +1068,11 @@ export interface components {
              * @enum {string}
              */
             status: "ready" | "not_ready";
+            /**
+             * Telephony
+             * @enum {string}
+             */
+            telephony: "mock" | "disabled" | "twilio_simulated" | "twilio_live";
         };
         /**
          * ReceiptOutcome
@@ -1217,6 +1300,12 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * StructuredCallResponse
+         * @description Deterministic keypad response captured from a trusted-contact call.
+         * @enum {string}
+         */
+        StructuredCallResponse: "CAN_RESPOND" | "CANNOT_RESPOND" | "REQUEST_OPERATOR";
         /** TrustedContactView */
         TrustedContactView: {
             /** Email */
@@ -1255,6 +1344,16 @@ export interface components {
             /** Relationship */
             relationship: string;
         };
+        /**
+         * UrgencySignal
+         * @description Advisory urgency detected in a voice conversation.
+         *
+         *     Advisory ONLY: it never changes IncidentStatus, IncidentPriority, resolution state or
+         *     the escalation schedule (ADR-016). The deterministic workflow and the operator stay in
+         *     charge.
+         * @enum {string}
+         */
+        UrgencySignal: "NONE" | "ASSISTANCE_REQUESTED" | "POTENTIAL_EMERGENCY";
         /** UserView */
         UserView: {
             /** Email */
@@ -1286,6 +1385,63 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** VoiceAdvisoryView */
+        VoiceAdvisoryView: {
+            /** Contact Established */
+            contact_established: boolean | null;
+            /**
+             * Disclaimer
+             * @default AI ADVISORY — HUMAN REVIEW REQUIRED
+             */
+            disclaimer: string;
+            /** Language */
+            language: string | null;
+            /** Provider */
+            provider: string;
+            /** Requested Human Help */
+            requested_human_help: boolean | null;
+            status: components["schemas"]["AISessionStatus"];
+            /** Summary */
+            summary: string | null;
+            urgency_signal: components["schemas"]["UrgencySignal"] | null;
+        };
+        /** VoiceCallView */
+        VoiceCallView: {
+            /** Acknowledged */
+            acknowledged: boolean;
+            ai: components["schemas"]["VoiceAdvisoryView"] | null;
+            /** Answered At */
+            answered_at: string | null;
+            /** Attempt */
+            attempt: number;
+            /** Direction */
+            direction: string;
+            /** Duration Seconds */
+            duration_seconds: number | null;
+            /** Ended At */
+            ended_at: string | null;
+            /** Failure Category */
+            failure_category: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Provider */
+            provider: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            status: components["schemas"]["CallStatus"];
+            structured_response: components["schemas"]["StructuredCallResponse"] | null;
+            /** Target Label */
+            target_label: string;
+            target_type: components["schemas"]["CallTargetType"];
+            /** To Number Masked */
+            to_number_masked: string | null;
         };
     };
     responses: never;
@@ -1722,6 +1878,67 @@ export interface operations {
             };
         };
     };
+    list_calls_v1_incidents__incident_id__calls_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                incident_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoiceCallView"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_call_v1_incidents__incident_id__calls__call_id__stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                incident_id: string;
+                call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     close_v1_incidents__incident_id__close_post: {
         parameters: {
             query?: never;
@@ -1744,6 +1961,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IncidentDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    escalate_now_v1_incidents__incident_id__escalate_now_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                incident_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
                 };
             };
             /** @description Validation Error */

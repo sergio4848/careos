@@ -1,6 +1,16 @@
 {
   "components": {
     "schemas": {
+      "AISessionStatus": {
+        "enum": [
+          "STARTED",
+          "COMPLETED",
+          "FAILED",
+          "TIMED_OUT"
+        ],
+        "title": "AISessionStatus",
+        "type": "string"
+      },
       "ActorType": {
         "enum": [
           "SYSTEM",
@@ -116,6 +126,32 @@
           "DENIED"
         ],
         "title": "AuditOutcome",
+        "type": "string"
+      },
+      "CallStatus": {
+        "description": "CareOS-internal call lifecycle. Provider states are mapped, never exposed.",
+        "enum": [
+          "QUEUED",
+          "INITIATED",
+          "RINGING",
+          "ANSWERED",
+          "IN_PROGRESS",
+          "COMPLETED",
+          "NO_ANSWER",
+          "BUSY",
+          "FAILED",
+          "CANCELLED",
+          "TIMED_OUT"
+        ],
+        "title": "CallStatus",
+        "type": "string"
+      },
+      "CallTargetType": {
+        "enum": [
+          "SERVICE_USER",
+          "TRUSTED_CONTACT"
+        ],
+        "title": "CallTargetType",
         "type": "string"
       },
       "ChangeRoleRequest": {
@@ -997,6 +1033,8 @@
           "CALL_FAILED",
           "NOTIFICATION_FAILED",
           "OPERATORS_ALERTED",
+          "AUTOMATED_CALL_CANCELLED",
+          "OPERATOR_ESCALATION_REQUESTED",
           "OPERATOR_TAKEOVER",
           "INCIDENT_RESOLVED",
           "INCIDENT_CLOSED"
@@ -1456,6 +1494,15 @@
       },
       "ReadinessStatus": {
         "properties": {
+          "ai_voice": {
+            "enum": [
+              "mock",
+              "disabled",
+              "openai_realtime"
+            ],
+            "title": "Ai Voice",
+            "type": "string"
+          },
           "database": {
             "enum": [
               "ok",
@@ -1512,6 +1559,16 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "telephony": {
+            "enum": [
+              "mock",
+              "disabled",
+              "twilio_simulated",
+              "twilio_live"
+            ],
+            "title": "Telephony",
+            "type": "string"
           }
         },
         "required": [
@@ -1521,7 +1578,9 @@
           "expected_schema_revision",
           "redis",
           "realtime",
-          "escalation_worker"
+          "escalation_worker",
+          "telephony",
+          "ai_voice"
         ],
         "title": "ReadinessStatus",
         "type": "object"
@@ -2214,6 +2273,16 @@
         "title": "SimulatorEventResult",
         "type": "object"
       },
+      "StructuredCallResponse": {
+        "description": "Deterministic keypad response captured from a trusted-contact call.",
+        "enum": [
+          "CAN_RESPOND",
+          "CANNOT_RESPOND",
+          "REQUEST_OPERATOR"
+        ],
+        "title": "StructuredCallResponse",
+        "type": "string"
+      },
       "TrustedContactView": {
         "properties": {
           "email": {
@@ -2317,6 +2386,16 @@
         "title": "TrustedContactWrite",
         "type": "object"
       },
+      "UrgencySignal": {
+        "description": "Advisory urgency detected in a voice conversation.\n\nAdvisory ONLY: it never changes IncidentStatus, IncidentPriority, resolution state or\nthe escalation schedule (ADR-016). The deterministic workflow and the operator stay in\ncharge.",
+        "enum": [
+          "NONE",
+          "ASSISTANCE_REQUESTED",
+          "POTENTIAL_EMERGENCY"
+        ],
+        "title": "UrgencySignal",
+        "type": "string"
+      },
       "UserView": {
         "properties": {
           "email": {
@@ -2414,6 +2493,224 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "VoiceAdvisoryView": {
+        "properties": {
+          "contact_established": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Established"
+          },
+          "disclaimer": {
+            "default": "AI ADVISORY \u2014 HUMAN REVIEW REQUIRED",
+            "title": "Disclaimer",
+            "type": "string"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "requested_human_help": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Human Help"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AISessionStatus"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "urgency_signal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UrgencySignal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "urgency_signal",
+          "contact_established",
+          "requested_human_help",
+          "language",
+          "summary",
+          "provider"
+        ],
+        "title": "VoiceAdvisoryView",
+        "type": "object"
+      },
+      "VoiceCallView": {
+        "properties": {
+          "acknowledged": {
+            "title": "Acknowledged",
+            "type": "boolean"
+          },
+          "ai": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VoiceAdvisoryView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "answered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answered At"
+          },
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "direction": {
+            "title": "Direction",
+            "type": "string"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "failure_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Category"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CallStatus"
+          },
+          "structured_response": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StructuredCallResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_label": {
+            "title": "Target Label",
+            "type": "string"
+          },
+          "target_type": {
+            "$ref": "#/components/schemas/CallTargetType"
+          },
+          "to_number_masked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Number Masked"
+          }
+        },
+        "required": [
+          "id",
+          "target_type",
+          "target_label",
+          "to_number_masked",
+          "provider",
+          "direction",
+          "status",
+          "acknowledged",
+          "structured_response",
+          "attempt",
+          "started_at",
+          "answered_at",
+          "ended_at",
+          "duration_seconds",
+          "failure_category",
+          "ai"
+        ],
+        "title": "VoiceCallView",
         "type": "object"
       }
     },
@@ -3160,6 +3457,116 @@
         ]
       }
     },
+    "/v1/incidents/{incident_id}/calls": {
+      "get": {
+        "description": "Automated call attempts with their provider status and, when an AI voice session ran, its structured advisory. Advisory data is decision support only and is always labelled for human review.",
+        "operationId": "list_calls_v1_incidents__incident_id__calls_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/VoiceCallView"
+                  },
+                  "title": "Response List Calls V1 Incidents  Incident Id  Calls Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "Session": []
+          },
+          {
+            "CSRF": []
+          }
+        ],
+        "summary": "Voice escalation calls for an incident",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/v1/incidents/{incident_id}/calls/{call_id}/stop": {
+      "post": {
+        "operationId": "stop_call_v1_incidents__incident_id__calls__call_id__stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Call Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "Session": []
+          },
+          {
+            "CSRF": []
+          }
+        ],
+        "summary": "Stop an automated call",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
     "/v1/incidents/{incident_id}/close": {
       "post": {
         "operationId": "close_v1_incidents__incident_id__close_post",
@@ -3216,6 +3623,62 @@
           }
         ],
         "summary": "Close",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/v1/incidents/{incident_id}/escalate-now": {
+      "post": {
+        "description": "Brings the operator-alert escalation step forward to run immediately.",
+        "operationId": "escalate_now_v1_incidents__incident_id__escalate_now_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "title": "Response Escalate Now V1 Incidents  Incident Id  Escalate Now Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "Session": []
+          },
+          {
+            "CSRF": []
+          }
+        ],
+        "summary": "Escalate now",
         "tags": [
           "incidents"
         ]
