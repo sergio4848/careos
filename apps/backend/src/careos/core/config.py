@@ -157,10 +157,12 @@ class Settings(BaseSettings):
         "cookie_domain",
         "redis_url",
         "twilio_account_sid",
+        "twilio_auth_token",
         "twilio_from_number",
         "twilio_region",
         "twilio_edge",
         "twilio_webhook_base_url",
+        "openai_api_key",
         mode="before",
     )
     @classmethod
