@@ -19,7 +19,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from careos.db.base import (
     Base,
@@ -32,6 +32,7 @@ from careos.db.base import (
 from careos.modules.incident_engine.state_machine import (
     ACTIVE_STATUSES,
     IncidentStatus,
+    assert_transition,
     sql_status_list,
 )
 
@@ -171,6 +172,16 @@ class Incident(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
     __mapper_args__ = {"version_id_col": version}
+
+    @validates("status")
+    def _enforce_state_machine(self, _key: str, value: IncidentStatus) -> IncidentStatus:
+        """Defence in depth: code that bypasses ``IncidentEngine.transition`` still cannot make
+        an illegal status change. Only a new, not yet loaded incident may start in any status."""
+        target = IncidentStatus(value)
+        current = self.__dict__.get("status")
+        if current is not None and current != target:
+            assert_transition(IncidentStatus(current), target)
+        return target
 
     @property
     def is_active(self) -> bool:

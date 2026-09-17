@@ -21,9 +21,11 @@ Shared database, shared schema, `organisation_id` on every tenant-owned row, enf
 5. **Device gateway credentials are tenant-bound**; a device is resolved only within the
    credential's organisation.
 6. **Realtime fan-out is partitioned by organisation** (Redis channel and in-process hub).
-7. **Platform administrators have no tenant care-data permissions** (least privilege); tenant
+7. **Suspending or deleting an organisation revokes access immediately**: session validation
+   requires an active organisation on every request, not only at login.
+8. **Platform administrators have no tenant care-data permissions** (least privilege); tenant
    support access would be an explicit, audited, time-boxed feature.
-8. **Tests:** `tests/integration/test_tenant_isolation.py` covers read, write, list, dashboard,
+9. **Tests:** `tests/integration/test_tenant_isolation.py` covers read, write, list, dashboard,
    audit, escalation policy, simulator, device registration and realtime isolation.
 
 ### Deferred: PostgreSQL row-level security

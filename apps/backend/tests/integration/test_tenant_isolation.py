@@ -174,3 +174,26 @@ async def test_realtime_hub_only_delivers_to_the_messages_organisation(
     )
     assert len(socket_a.sent) == 1
     assert socket_b.sent == []
+
+
+async def test_suspending_an_organisation_revokes_existing_sessions(
+    client_factory: ClientFactory, tenant: Tenant, other_tenant: Tenant, container: Container
+) -> None:
+    from sqlalchemy import update
+
+    from careos.modules.organisations.models import Organisation, OrganisationStatus
+
+    operator = await client_factory(tenant.emails[Role.OPERATOR])
+    unaffected = await client_factory(other_tenant.emails[Role.OPERATOR])
+    assert (await operator.get("/v1/incidents")).status_code == 200
+
+    async with container.session_factory() as session:
+        await session.execute(
+            update(Organisation)
+            .where(Organisation.id == tenant.organisation_id)
+            .values(status=OrganisationStatus.SUSPENDED)
+        )
+        await session.commit()
+
+    assert (await operator.get("/v1/incidents")).status_code == 401
+    assert (await unaffected.get("/v1/incidents")).status_code == 200

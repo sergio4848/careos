@@ -18,7 +18,9 @@ predict illness, recommend treatment or let AI independently decide on an emerge
   * catches every exception and returns an `AIOutcome` instead of raising,
   * records an `AISession` and a timeline event (`AI_CALL_STARTED/COMPLETED/FAILED`).
 * The deterministic path always continues: the automated welfare call is placed through the
-  `VoiceProvider` whether AI succeeded, failed or is disabled.
+  `VoiceProvider` whether AI succeeded, failed or is disabled. AI assistance runs **concurrently**
+  with the call, so a slow or hanging AI provider cannot delay it
+  (`test_slow_ai_never_delays_the_deterministic_call`, `test_escalation_runs_with_ai_disabled`).
 * AI text is stored as `advisory_summary`, rendered in the console inside a clearly labelled
   "AI-generated · advisory only" box.
 * Providers are selected by configuration (`CAREOS_AI_PROVIDER=mock|mock_unavailable|disabled`);

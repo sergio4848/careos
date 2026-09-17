@@ -8,13 +8,18 @@ from sqlalchemy import select, update
 
 from careos.bootstrap import Container, ProviderRegistry
 from careos.core.time import utcnow
-from careos.modules.ai_orchestrator.orchestrator import AIOrchestrator, UnavailableAIProvider
+from careos.modules.ai_orchestrator.orchestrator import (
+    AIOrchestrator,
+    CheckInAssist,
+    CheckInContext,
+    UnavailableAIProvider,
+)
 from careos.modules.devices.models import ConnectionStatus, DeviceConnection
 from careos.modules.devices.service import mark_stale_devices_offline
 from careos.modules.escalation_engine.executor import EscalationExecutor
 from careos.modules.escalation_engine.models import ScheduledAction, ScheduledActionStatus
 from careos.modules.identity.rbac import Role
-from careos.modules.incident_engine.models import Incident
+from careos.modules.incident_engine.models import Incident, IncidentEvent
 from careos.modules.notification_engine.models import Call, CallStatus
 from careos.modules.notification_engine.providers import MockVoiceProvider
 from tests.factories import ClientFactory, Tenant, sos_event
@@ -71,10 +76,9 @@ async def test_full_escalation_ladder(
         "+44 7700 900456",
     ]
     types = await event_types(container.session_factory, incident_id)
-    assert types[5:] == [
+    # AI assistance runs alongside the call, so only the deterministic events have a fixed order.
+    assert [t for t in types[5:] if not t.startswith("AI_")] == [
         "AUTOMATED_CALL_STARTED",
-        "AI_CALL_STARTED",
-        "AI_CALL_COMPLETED",
         "AUTOMATED_CALL_NO_ANSWER",
         "TRUSTED_CONTACT_CALLED",
         "TRUSTED_CONTACT_NO_ANSWER",
@@ -82,6 +86,7 @@ async def test_full_escalation_ladder(
         "TRUSTED_CONTACT_NO_ANSWER",
         "OPERATORS_ALERTED",
     ]
+    assert {"AI_CALL_STARTED", "AI_CALL_COMPLETED"} <= set(types)
     assert await count(container.session_factory, Call, Call.status == CallStatus.NO_ANSWER) == 3
 
 
@@ -116,8 +121,52 @@ async def test_ai_outage_does_not_affect_incident_handling(
 
     types = await event_types(container.session_factory, incident_id)
     assert "AI_CALL_FAILED" in types
-    assert types[-1] == "AUTOMATED_CALL_NO_ANSWER"  # the deterministic call still happened
+    assert "AUTOMATED_CALL_NO_ANSWER" in types  # the deterministic call still happened
     assert (await load_incident(container, incident_id)).status.value == "CONTACTING"
+
+
+async def test_slow_ai_never_delays_the_deterministic_call(
+    client_factory: ClientFactory, tenant: Tenant, container: Container, providers: ProviderRegistry
+) -> None:
+    class HangingAIProvider:
+        name = "hanging-ai"
+
+        async def assist_check_in(self, context: CheckInContext) -> CheckInAssist:
+            await asyncio.sleep(30)
+            raise AssertionError("unreachable")
+
+    providers.ai = AIOrchestrator(HangingAIProvider(), timeout_seconds=1)
+    incident_id = (await raise_sos(await client_factory(), tenant))["incident_id"]
+    incident = await load_incident(container, incident_id)
+    await make_executor(container, providers).run_due(at(incident, 1))
+
+    async with container.session_factory() as session:
+        rows = (
+            await session.execute(
+                select(IncidentEvent.event_type, IncidentEvent.sequence).where(
+                    IncidentEvent.incident_id == uuid.UUID(incident_id)
+                )
+            )
+        ).all()
+    sequence = {row.event_type.value: row.sequence for row in rows}
+    # The call outcome was recorded before the AI assistant gave up.
+    assert sequence["AUTOMATED_CALL_NO_ANSWER"] < sequence["AI_CALL_FAILED"]
+
+
+async def test_escalation_runs_with_ai_disabled(
+    client_factory: ClientFactory, tenant: Tenant, container: Container, providers: ProviderRegistry
+) -> None:
+    providers.ai = AIOrchestrator(None, timeout_seconds=1)
+    incident_id = (await raise_sos(await client_factory(), tenant))["incident_id"]
+    incident = await load_incident(container, incident_id)
+    executor = make_executor(container, providers)
+    for second in (1, 31, 61, 91):
+        assert await executor.run_due(at(incident, second)) == 1
+
+    types = await event_types(container.session_factory, incident_id)
+    assert not [t for t in types if t.startswith("AI_")]
+    assert types[-1] == "OPERATORS_ALERTED"
+    assert (await load_incident(container, incident_id)).status.value == "ESCALATED"
 
 
 async def test_acknowledgement_stops_contact_steps_but_operators_still_verify(
