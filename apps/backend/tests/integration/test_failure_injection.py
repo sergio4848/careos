@@ -126,7 +126,9 @@ class HangingPublisher:
         await forever()
 
 
-@pytest.mark.parametrize("publisher", [ExplodingPublisher(), HangingPublisher()], ids=str)
+@pytest.mark.parametrize(
+    "publisher", [ExplodingPublisher(), HangingPublisher()], ids=["raises", "hangs"]
+)
 async def test_realtime_failure_never_fails_or_delays_a_committed_incident(
     container: Container, tenant: Tenant, publisher: Any
 ) -> None:
