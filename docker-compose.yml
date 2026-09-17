@@ -1,0 +1,147 @@
+# CareOS local development stack.
+#
+#   docker compose up --build
+#
+# Services: postgres, redis, migrate (one-shot: migrations + demo seed), api, worker, web.
+# All defaults below are DEVELOPMENT ONLY. Override via a local .env file (see .env.example).
+name: careos
+
+x-backend-env: &backend-env
+  CAREOS_ENVIRONMENT: ${CAREOS_ENVIRONMENT:-development}
+  CAREOS_LOG_LEVEL: ${CAREOS_LOG_LEVEL:-INFO}
+  CAREOS_LOG_JSON: ${CAREOS_LOG_JSON:-true}
+  CAREOS_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-careos}:${POSTGRES_PASSWORD:-careos-dev-only}@postgres:5432/${POSTGRES_DB:-careos}
+  CAREOS_DATABASE_POOL_SIZE: ${CAREOS_DATABASE_POOL_SIZE:-10}
+  # Used by `docker compose run --rm api pytest` (database created by infra/docker/postgres/init)
+  CAREOS_TEST_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-careos}:${POSTGRES_PASSWORD:-careos-dev-only}@postgres:5432/careos_test
+  CAREOS_REDIS_URL: redis://redis:6379/0
+  CAREOS_SECRET_KEY: ${CAREOS_SECRET_KEY:-dev-insecure-secret-key-do-not-use-in-production}
+  CAREOS_SESSION_TTL_MINUTES: ${CAREOS_SESSION_TTL_MINUTES:-720}
+  CAREOS_SESSION_IDLE_TIMEOUT_MINUTES: ${CAREOS_SESSION_IDLE_TIMEOUT_MINUTES:-120}
+  CAREOS_COOKIE_SECURE: ${CAREOS_COOKIE_SECURE:-false}
+  CAREOS_COOKIE_DOMAIN: ${CAREOS_COOKIE_DOMAIN:-}
+  CAREOS_CORS_ALLOWED_ORIGINS: ${CAREOS_CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+  CAREOS_SIMULATOR_ENABLED: ${CAREOS_SIMULATOR_ENABLED:-true}
+  CAREOS_SIMULATOR_GATEWAY_KEY: ${CAREOS_SIMULATOR_GATEWAY_KEY:-cgk_demo0001_dev-insecure-simulator-secret}
+  CAREOS_GATEWAY_INTERNAL_URL: http://api:8000
+  CAREOS_VOICE_PROVIDER: ${CAREOS_VOICE_PROVIDER:-mock}
+  CAREOS_NOTIFICATION_PROVIDER: ${CAREOS_NOTIFICATION_PROVIDER:-mock}
+  CAREOS_AI_PROVIDER: ${CAREOS_AI_PROVIDER:-mock}
+  CAREOS_MOCK_VOICE_OUTCOME: ${CAREOS_MOCK_VOICE_OUTCOME:-no_answer}
+  CAREOS_PROVIDER_TIMEOUT_SECONDS: ${CAREOS_PROVIDER_TIMEOUT_SECONDS:-10}
+  CAREOS_WORKER_POLL_INTERVAL_SECONDS: ${CAREOS_WORKER_POLL_INTERVAL_SECONDS:-1.0}
+  CAREOS_DEVICE_OFFLINE_AFTER_SECONDS: ${CAREOS_DEVICE_OFFLINE_AFTER_SECONDS:-86400}
+  CAREOS_SEED_DEMO_PASSWORD: ${CAREOS_SEED_DEMO_PASSWORD:-CareOS-Demo-2026!}
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-careos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-careos-dev-only}
+      POSTGRES_DB: ${POSTGRES_DB:-careos}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ./infra/docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    # AOF persistence: Redis is not the source of truth, but we avoid needless data loss.
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    image: careos-backend:local
+    environment: *backend-env
+    command: ["sh", "-c", "alembic upgrade head && python -m careos.cli seed-demo"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: careos-backend:local
+    environment: *backend-env
+    command:
+      [
+        "uvicorn", "careos.api.app:create_app", "--factory",
+        "--host", "0.0.0.0", "--port", "8000",
+        "--proxy-headers", "--forwarded-allow-ips", "127.0.0.1",
+        "--no-server-header",
+      ]
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  worker:
+    image: careos-backend:local
+    environment: *backend-env
+    command: ["python", "-m", "careos.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # The escalation loop touches this file after every successful poll.
+      test: ["CMD", "python", "-c", "import sys,time; sys.exit(0 if time.time() - int(open('/tmp/careos-worker-heartbeat').read()) < 60 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    image: careos-web:local
+    environment:
+      CAREOS_PUBLIC_API_URL: ${CAREOS_PUBLIC_API_URL:-http://localhost:8000}
+      CAREOS_PUBLIC_WS_URL: ${CAREOS_PUBLIC_WS_URL:-ws://localhost:8000/v1/ws}
+      CAREOS_SIMULATOR_ENABLED: ${CAREOS_SIMULATOR_ENABLED:-true}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:

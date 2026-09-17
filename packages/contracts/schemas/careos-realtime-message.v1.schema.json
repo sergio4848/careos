@@ -1,0 +1,71 @@
+{
+  "$defs": {
+    "RealtimeMessageType": {
+      "enum": [
+        "incident.created",
+        "incident.updated",
+        "device.updated"
+      ],
+      "title": "RealtimeMessageType",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "device_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Device Id"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "incident_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Incident Id"
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "organisation_id": {
+      "format": "uuid",
+      "title": "Organisation Id",
+      "type": "string"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    },
+    "type": {
+      "$ref": "#/$defs/RealtimeMessageType"
+    }
+  },
+  "required": [
+    "type",
+    "organisation_id"
+  ],
+  "title": "CareOS Realtime Message v1",
+  "type": "object"
+}

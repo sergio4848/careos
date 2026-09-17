@@ -1,0 +1,18 @@
+{
+  "name": "@careos/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared CareOS contracts. Generated from the backend's Pydantic models: never edit generated files by hand.",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "generate": "openapi-typescript ./openapi/careos-api.v1.json -o ./src/generated/api.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0",
+    "typescript": "6.0.3"
+  }
+}

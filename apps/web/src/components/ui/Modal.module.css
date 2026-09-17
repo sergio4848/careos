@@ -1,0 +1,24 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(3, 7, 16, 0.72);
+}
+
+.dialog {
+  width: min(520px, 100%);
+  padding: 1.25rem 1.35rem;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+
+.description {
+  margin: 0.4rem 0 1rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}

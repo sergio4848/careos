@@ -1,0 +1,206 @@
+{
+  "$defs": {
+    "DeviceEventType": {
+      "enum": [
+        "SOS_BUTTON",
+        "FALL_DETECTED",
+        "DEVICE_FAULT",
+        "LOW_BATTERY",
+        "HEARTBEAT"
+      ],
+      "title": "DeviceEventType",
+      "type": "string"
+    },
+    "DeviceTelemetry": {
+      "additionalProperties": false,
+      "properties": {
+        "battery": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Battery level, percent",
+          "title": "Battery"
+        },
+        "signal": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Signal quality, percent",
+          "title": "Signal"
+        }
+      },
+      "title": "DeviceTelemetry",
+      "type": "object"
+    },
+    "GeoLocation": {
+      "additionalProperties": false,
+      "properties": {
+        "accuracy_m": {
+          "anyOf": [
+            {
+              "maximum": 100000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Accuracy M"
+        },
+        "latitude": {
+          "maximum": 90,
+          "minimum": -90,
+          "title": "Latitude",
+          "type": "number"
+        },
+        "longitude": {
+          "maximum": 180,
+          "minimum": -180,
+          "title": "Longitude",
+          "type": "number"
+        }
+      },
+      "required": [
+        "latitude",
+        "longitude"
+      ],
+      "title": "GeoLocation",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.careos.dev/careos-device-event.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A normalised event emitted by a care device or connected system.",
+  "examples": [
+    {
+      "device": {
+        "battery": 74,
+        "signal": 82
+      },
+      "device_id": "DEV-0001",
+      "event_id": "evt_01J9Z3Q4W7K8M2N5P6R7S8T9V0",
+      "event_type": "SOS_BUTTON",
+      "location": {
+        "latitude": 51.5074,
+        "longitude": -0.1278
+      },
+      "metadata": {},
+      "schema_version": "1.0",
+      "service_user_id": null,
+      "timestamp": "2026-09-16T09:30:00Z"
+    }
+  ],
+  "properties": {
+    "device": {
+      "$ref": "#/$defs/DeviceTelemetry"
+    },
+    "device_id": {
+      "description": "Device identifier as registered in CareOS (e.g. manufacturer serial).",
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_\\-:.]*$",
+      "title": "Device Id",
+      "type": "string"
+    },
+    "event_id": {
+      "description": "Globally unique, producer-generated ID. Used for idempotency.",
+      "maxLength": 128,
+      "minLength": 8,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_\\-:.]*$",
+      "title": "Event Id",
+      "type": "string"
+    },
+    "event_type": {
+      "$ref": "#/$defs/DeviceEventType"
+    },
+    "location": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GeoLocation"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "metadata": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "description": "Flat vendor extras. Must not contain personal or health data.",
+      "maxProperties": 32,
+      "title": "Metadata",
+      "type": "object"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "service_user_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional hint. The CareOS device registry is authoritative.",
+      "title": "Service User Id"
+    },
+    "timestamp": {
+      "description": "When the event occurred on the device (ISO-8601)",
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    }
+  },
+  "required": [
+    "event_id",
+    "event_type",
+    "device_id",
+    "timestamp"
+  ],
+  "title": "CareOS Device Event v1",
+  "type": "object"
+}

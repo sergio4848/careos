@@ -1,0 +1,12 @@
+# Build context for apps/web/Dockerfile is the repository root.
+**/node_modules
+**/.next
+**/coverage
+.git
+.github
+.localdev
+apps/backend
+docs
+infra
+.env
+.env.*

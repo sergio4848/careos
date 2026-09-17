@@ -1,0 +1,43 @@
+# pip install pre-commit && pre-commit install
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-json
+        exclude: tsconfig\.json$
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=800"]
+      - id: detect-private-key
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        files: ^apps/backend/
+      - id: ruff-format
+        files: ^apps/backend/
+
+  - repo: local
+    hooks:
+      - id: web-lint
+        name: web lint (eslint)
+        entry: npm run lint
+        language: system
+        pass_filenames: false
+        files: ^apps/web/
+      - id: web-typecheck
+        name: web typecheck (tsc)
+        entry: npm run typecheck
+        language: system
+        pass_filenames: false
+        files: ^(apps/web|packages/contracts)/

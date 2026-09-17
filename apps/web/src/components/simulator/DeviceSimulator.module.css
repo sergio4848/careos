@@ -1,0 +1,147 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.header h2 {
+  font-size: 1.2rem;
+}
+
+.header p {
+  margin: 0;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+}
+
+@media (max-width: 520px) {
+  .facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.facts dt {
+  color: var(--text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.facts dd {
+  margin: 0.2rem 0 0;
+  font-size: 1.15rem;
+  font-weight: 650;
+}
+
+.sos {
+  width: 100%;
+  min-height: 56px;
+  font-size: 1.1rem;
+  letter-spacing: 0.08em;
+}
+
+.advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.advanced summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  margin-bottom: 0.6rem;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .controls {
+    grid-template-columns: 1fr;
+  }
+}
+
+.controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.controls select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem;
+}
+
+.controls input[type="range"] {
+  accent-color: var(--accent);
+}
+
+.actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.error {
+  margin: 0;
+  color: var(--critical);
+  font-weight: 600;
+}
+
+.result {
+  padding: 0.7rem 0.8rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+}
+
+.result p {
+  margin: 0 0 0.4rem;
+}
+
+.result summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.result pre {
+  margin: 0.4rem 0;
+  padding: 0.5rem;
+  overflow-x: auto;
+  font-size: 0.75rem;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+}

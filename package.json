@@ -1,0 +1,30 @@
+{
+  "name": "careos",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CareOS monorepo: telecare & safety incident orchestration platform",
+  "packageManager": "npm@11.4.2",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "workspaces": [
+    "apps/web",
+    "packages/contracts"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w @careos/web",
+    "build:web": "npm run build -w @careos/web",
+    "lint": "npm run lint -w @careos/web",
+    "typecheck": "npm run typecheck -w @careos/contracts && npm run typecheck -w @careos/web",
+    "test": "npm run test -w @careos/web",
+    "contracts:generate": "npm run generate -w @careos/contracts"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  },
+  "overrides": {
+    "openapi-typescript": {
+      "typescript": "6.0.3"
+    }
+  }
+}

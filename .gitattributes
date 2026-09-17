@@ -1,0 +1,7 @@
+# Normalise line endings so containers built on Windows hosts behave identically.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary

@@ -1,0 +1,43 @@
+# --- Secrets & local environment -------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+build/
+dist/
+
+# --- Node / Next.js ------------------------------------------------------------
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+coverage/
+npm-debug.log*
+
+# --- Tooling / OS ------------------------------------------------------------
+.localdev/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# --- Infrastructure ------------------------------------------------------------
+.terraform/
+*.tfstate
+*.tfstate.*

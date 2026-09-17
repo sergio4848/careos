@@ -1,0 +1,148 @@
+/*
+ * CareOS operations console design tokens.
+ * Dark navy, high contrast (WCAG AA for body text), colour is never the only signal:
+ * every state also has a text label.
+ */
+:root {
+  color-scheme: dark;
+
+  --bg: #0a1020;
+  --bg-raised: #0e1629;
+  --surface: #121c33;
+  --surface-2: #17233e;
+  --surface-hover: #1c2a4a;
+  --border: #25365a;
+  --border-strong: #35507f;
+
+  --text: #e9eef8;
+  --text-muted: #a9b7cf;
+  --text-subtle: #8394b3;
+
+  --accent: #5b9bff;
+  --accent-strong: #3b7ff0;
+  --accent-contrast: #06101f;
+
+  --critical: #ff5c5f;
+  --critical-strong: #e5383b;
+  --critical-bg: #2b0d12;
+  --critical-border: #a3252b;
+
+  --warning: #ffb547;
+  --warning-bg: #2d210b;
+  --warning-border: #8a5d12;
+
+  --success: #3ccf86;
+  --success-bg: #0c2a1c;
+  --success-border: #1f7a4d;
+
+  --info: #7cb7ff;
+  --info-bg: #0f2039;
+  --info-border: #2b4f86;
+
+  --neutral-bg: #1a2640;
+
+  --focus-ring: #ffd166;
+  --radius-sm: 6px;
+  --radius: 10px;
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.25);
+
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", ui-monospace, Consolas, "SF Mono", monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  line-height: 1.25;
+  font-weight: 650;
+}
+
+h1 {
+  font-size: 1.45rem;
+}
+
+h2 {
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
+}
+
+h3 {
+  font-size: 0.95rem;
+}
+
+code,
+pre {
+  font-family: var(--font-mono);
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.eyebrow {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

@@ -1,0 +1,112 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "careos-backend"
+version = "0.1.0"
+description = "CareOS backend: telecare & safety incident orchestration (modular monolith)"
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "Not yet decided - all rights reserved" }
+# Direct dependencies are pinned exactly for reproducible images.
+# See docs/decisions/ADR-011-dependency-policy.md
+dependencies = [
+  "fastapi==0.141.1",
+  "uvicorn[standard]==0.53.0",
+  "pydantic==2.13.5",
+  "pydantic-settings==2.15.0",
+  "email-validator==2.3.0",
+  "sqlalchemy[asyncio]==2.0.54",
+  "asyncpg==0.31.0",
+  "alembic==1.20.0",
+  "redis==8.1.0",
+  "argon2-cffi==25.1.0",
+  "structlog==26.1.0",
+  "prometheus-client==0.26.0",
+  "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "pytest-cov==7.1.0",
+  "ruff==0.16.8",
+  "mypy==2.3.1",
+  "fakeredis==2.38.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/careos"]
+
+# --------------------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "W",  # pycodestyle / pyflakes
+  "I",            # isort
+  "B",            # bugbear
+  "UP",           # pyupgrade
+  "S",            # bandit (security)
+  "ASYNC",        # async pitfalls
+  "DTZ",          # timezone-naive datetimes
+  "SIM", "C4", "PIE", "RET",
+  "T20",          # no print()
+  "RUF",
+]
+ignore = [
+  "RUF012",  # mutable class attrs are fine for SQLAlchemy/Pydantic declarations
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S311"]
+"src/careos/cli.py" = ["T201"]
+"scripts/**" = ["T201"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body"]
+
+# --------------------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.13"
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+packages = ["careos"]
+disallow_untyped_defs = true
+no_implicit_optional = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+strict_equality = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["asyncpg.*", "argon2.*"]
+ignore_missing_imports = true
+
+# --------------------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+addopts = "-ra --strict-markers"
+markers = [
+  "integration: requires PostgreSQL",
+]
+filterwarnings = [
+  "error::sqlalchemy.exc.SAWarning",
+]
+
+[tool.coverage.run]
+source = ["careos"]
+branch = true
+
+[tool.coverage.report]
+skip_empty = true
+show_missing = true

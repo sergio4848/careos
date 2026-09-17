@@ -1,0 +1,148 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 0.9rem 1rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 6px solid var(--warning);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+
+.critical {
+  border-color: var(--critical-border);
+  border-left-color: var(--critical);
+  background: linear-gradient(180deg, var(--critical-bg) 0%, var(--surface) 55%);
+}
+
+.unacknowledged {
+  animation: alert-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes alert-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 92, 95, 0.55), var(--shadow);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(255, 92, 95, 0), var(--shadow);
+  }
+}
+
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.trigger {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.flag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--critical);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.reference {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-subtle);
+}
+
+.headline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.name {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.name a {
+  color: var(--text);
+}
+
+.location {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem 1rem;
+  margin: 0;
+}
+
+.facts dt {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+}
+
+.facts dd {
+  margin: 0.15rem 0 0;
+  font-size: 0.9rem;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.timer {
+  font-family: var(--font-mono);
+  font-size: 1.7rem !important;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.critical .timer {
+  color: var(--critical);
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+
+.linkButton {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0.45rem 0.95rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 650;
+  font-size: 0.86rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.linkButton:hover {
+  background: var(--surface-hover);
+  text-decoration: none;
+}
