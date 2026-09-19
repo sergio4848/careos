@@ -1,6 +1,6 @@
 # Licence: not yet decided
 
-Copyright (c) 2026 the CareOS authors. All rights reserved.
+Copyright (c) 2026 Sergen Şahin. All rights reserved.
 
 No licence has been chosen for this repository yet. Until one is added:
 
