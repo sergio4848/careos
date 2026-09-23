@@ -25,6 +25,7 @@ from careos.bootstrap import Container, ProviderRegistry, build_container
 from careos.core.config import Settings
 from careos.db.registry import metadata
 from careos.modules.ai_orchestrator.orchestrator import AIOrchestrator, MockAIProvider
+from careos.modules.ai_orchestrator.voice import MockAIVoiceProvider, VoiceAIOrchestrator
 from careos.modules.notification_engine.providers import (
     MockNotificationProvider,
     MockVoiceProvider,
@@ -56,6 +57,12 @@ def make_settings(**overrides: object) -> Settings:
         "provider_timeout_seconds": 2,
         "escalation_retry_base_seconds": 0,
         "escalation_max_attempts": 3,
+        # Telephony/AI voice test wiring: webhook URL building needs a base; short waits.
+        "twilio_webhook_base_url": "http://testserver",
+        "voice_call_poll_interval_seconds": 0.02,
+        "voice_call_max_duration_seconds": 30,
+        "ai_connect_timeout_seconds": 2,
+        "ai_response_timeout_seconds": 2,
     }
     values.update(overrides)
     return Settings(**values)  # type: ignore[arg-type]
@@ -96,6 +103,9 @@ def providers(settings: Settings) -> ProviderRegistry:
         voice=MockVoiceProvider("no_answer"),
         notifications=MockNotificationProvider(),
         ai=AIOrchestrator(MockAIProvider(), timeout_seconds=settings.provider_timeout_seconds),
+        voice_ai=VoiceAIOrchestrator(
+            MockAIVoiceProvider(), connect_timeout_seconds=settings.ai_connect_timeout_seconds
+        ),
     )
 
 

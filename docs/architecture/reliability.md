@@ -13,7 +13,9 @@ ADR-012, ADR-013.
 | Worker process | **Required for automation**, not for the API | Escalation steps wait durably; `/ready` stays 200 with `escalation_worker: lagging`; dashboard banner tells operators to act manually |
 | Redis | **Optional** (degraded mode) | Rate limits become per-process; realtime reaches only sockets on the publishing API instance; consoles reconcile over REST (≤10 s). `/ready` stays 200 with `redis: unavailable`, `realtime: degraded` |
 | Voice / SMS provider | Optional per step | Failure recorded, retried with backoff, operators alerted when exhausted |
-| AI provider | Optional, advisory only | Timeout/failure recorded as `AI_CALL_FAILED`; deterministic flow unaffected |
+| Twilio (real telephony) | Optional, off by default | API timeout/outage → provider failure path (retry → fail-safe operator alert); webhook loss → the call ends at its bounded maximum and is recorded TIMED_OUT; `/ready` reports `telephony` state |
+| AI voice provider (OpenAI Realtime) | Optional, advisory only | Connect failure, hang, malformed events or disconnect → AI session FAILED/TIMED_OUT, `AI_CALL_FAILED` on the timeline; the phone call and the deterministic ladder continue; `/ready` reports `ai_voice` and its outage never affects SOS ingestion |
+| AI provider (check-in notes) | Optional, advisory only | Timeout/failure recorded as `AI_CALL_FAILED`; deterministic flow unaffected |
 
 Why Redis does not fail readiness: removing an API instance from the load balancer because Redis
 is down would take away the only path for new alarms while fixing nothing. Every safety path
@@ -36,10 +38,12 @@ instead.
     "status": "ready",
     "database": "ok",
     "migrations": "current",
-    "expected_schema_revision": "0002",
+    "expected_schema_revision": "0003",
     "redis": "ok | unavailable | not_configured",
     "realtime": "ok | degraded | local_only",
-    "escalation_worker": "ok | lagging | unknown"
+    "escalation_worker": "ok | lagging | unknown",
+    "telephony": "mock | disabled | twilio_simulated | twilio_live",
+    "ai_voice": "mock | disabled | openai_realtime"
   }
   ```
 
@@ -61,6 +65,13 @@ instead.
 | `careos_ai_timeouts_total{provider}` | AI calls abandoned | informational |
 | `careos_escalation_failures_total{action_type,category}` | `retrying`, `exhausted`, `record_failed` | any `exhausted` or `record_failed` |
 | `careos_realtime_delivery_failures_total{stage}` | `broker_publish`, `broker_unavailable`, `after_commit`, `socket_send` | sustained `broker_*` (Redis down) |
+| `careos_calls_started_total` / `_answered_total` / `_failed_total{category}` | outbound voice calls | failed rate > 0 sustained |
+| `careos_call_duration_seconds` | completed call durations | — |
+| `careos_media_sessions_total{result}` | media streams (`accepted`, `rejected_auth`, `rejected_limit`, `closed_malformed`) | any `rejected_auth` spike (probing) |
+| `careos_ai_voice_sessions_total{provider,result}` / `careos_ai_voice_failures_total` | in-call AI sessions | failure rate (degraded assistant) |
+| `careos_ai_voice_latency_seconds` | stream start → first AI audio | p95 > 3 s |
+| `careos_twilio_webhook_rejections_total{reason}` | unsigned/mis-signed/mismatched callbacks | any `bad_signature` (forgery attempts) |
+| `careos_provider_idempotency_conflicts_total{kind}` | duplicate dials refused | informational (crash-window recoveries) |
 | `/ready` `escalation_worker: lagging` | a step is overdue by > `CAREOS_ESCALATION_OVERDUE_AFTER_SECONDS` (60 s) | page on-call |
 
 ## Logs
@@ -75,7 +86,9 @@ Safety events carry the identifiers needed to trace an incident across API and w
 | `incident.created` / `.taken_over` / `.resolved` / `.closed` | `incident_id`, `organisation_id`, `event_id` or `user_id` |
 | `escalation.provider_failed` | `provider_kind`, `provider`, `failure_category`, `incident_id`, `organisation_id`, `action_id`, `attempt` |
 | `escalation.action_error` / `.failure_not_recorded` | `incident_id`, `organisation_id`, `action_id` |
-| `ai.check_in_failed` | `provider`, `failure_category`, `incident_id`, `organisation_id` |
+| `ai.check_in_failed` / `ai_voice.connect_failed` | `provider`, `failure_category`, `incident_id`, `organisation_id`, `call_id` |
+| `telephony.call_requested` / `.status_callback` / `.gather_response` | `provider`, `provider_call_sid`, `call_id`, `incident_id`, `organisation_id`, `result` |
+| `telephony.webhook_rejected` / `.media_bridge_error` | `failure_category` (+ call/incident/organisation ids where known) |
 | `realtime.publish_failed` / `.after_commit_publish_failed` | `failure_category`, `message_type`, `organisation_id`, `incident_id` |
 
 Never logged: passwords, session tokens, CSRF tokens, gateway keys, cookies; service-user names,

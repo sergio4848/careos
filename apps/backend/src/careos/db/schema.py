@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Literal
 
 #: Alembic revisions in order, oldest first.
-SCHEMA_REVISIONS: tuple[str, ...] = ("0001", "0002")
+SCHEMA_REVISIONS: tuple[str, ...] = ("0001", "0002", "0003")
 EXPECTED_SCHEMA_REVISION = SCHEMA_REVISIONS[-1]
 
 SchemaState = Literal["current", "ahead", "outdated", "unknown"]

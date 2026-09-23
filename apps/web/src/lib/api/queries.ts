@@ -11,6 +11,7 @@ import type {
   ServiceUserProfile,
   SimulatorEventRequest,
   SimulatorEventResult,
+  VoiceCallView,
 } from "@careos/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -25,6 +26,7 @@ export const queryKeys = {
   incidents: (scope: IncidentScope) => ["incidents", scope] as const,
   incident: (id: string) => ["incident", id] as const,
   timeline: (id: string) => ["incident", id, "timeline"] as const,
+  calls: (id: string) => ["incident", id, "calls"] as const,
   devices: ["devices"] as const,
   serviceUser: (id: string) => ["service-user", id] as const,
   audit: (resourceId?: string) => ["audit", resourceId ?? "all"] as const,
@@ -80,6 +82,16 @@ export function useTimeline(id: string) {
   return useQuery({
     queryKey: queryKeys.timeline(id),
     queryFn: ({ signal }) => api.get<IncidentEventView[]>(`/v1/incidents/${id}/timeline`, signal),
+    refetchInterval,
+  });
+}
+
+export function useIncidentCalls(id: string) {
+  const api = useApi();
+  const refetchInterval = usePollingFallback();
+  return useQuery({
+    queryKey: queryKeys.calls(id),
+    queryFn: ({ signal }) => api.get<VoiceCallView[]>(`/v1/incidents/${id}/calls`, signal),
     refetchInterval,
   });
 }
@@ -152,6 +164,33 @@ export function useCloseIncident() {
   return useIncidentMutation(({ incidentId, notes }: { incidentId: string; notes?: string }) =>
     api.post<IncidentDetail>(`/v1/incidents/${incidentId}/close`, { notes: notes || null }),
   );
+}
+
+export function useStopCall() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ incidentId, callId }: { incidentId: string; callId: string }) =>
+      api.post<void>(`/v1/incidents/${incidentId}/calls/${callId}/stop`),
+    onSettled: (_data, _error, { incidentId }) => {
+      // Success or conflict, the truth lives in PostgreSQL: refetch it.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.incident(incidentId) });
+      void queryClient.invalidateQueries({ queryKey: ["audit"] });
+    },
+  });
+}
+
+export function useEscalateNow() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ incidentId }: { incidentId: string }) =>
+      api.post<{ accelerated_steps: number }>(`/v1/incidents/${incidentId}/escalate-now`),
+    onSettled: (_data, _error, { incidentId }) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.incident(incidentId) });
+      void queryClient.invalidateQueries({ queryKey: ["audit"] });
+    },
+  });
 }
 
 export function useSimulateEvent() {

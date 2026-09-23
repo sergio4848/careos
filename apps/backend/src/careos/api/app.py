@@ -31,6 +31,8 @@ from careos.modules.realtime.broker import RedisRealtimeBroker
 from careos.modules.realtime.router import router as realtime_router
 from careos.modules.service_users.router import router as service_users_router
 from careos.modules.simulator.router import router as simulator_router
+from careos.modules.telephony.media import router as telephony_media_router
+from careos.modules.telephony.router import router as telephony_webhook_router
 from careos.worker.runner import run_loops
 
 log = get_logger(__name__)
@@ -105,6 +107,8 @@ def create_app(settings: Settings | None = None, container: Container | None = N
         dashboard_router,
         audit_router,
         realtime_router,
+        telephony_webhook_router,
+        telephony_media_router,
     ):
         app.include_router(router)
     if settings.simulator_enabled:

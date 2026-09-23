@@ -18,11 +18,17 @@ from careos.core.config import Settings
 from careos.core.rate_limit import InMemoryRateLimiter, RateLimiter, RedisRateLimiter
 from careos.db.session import create_engine, create_session_factory
 from careos.db.uow import UnitOfWork
+from careos.modules.ai_orchestrator.openai_realtime import OpenAIRealtimeProvider
 from careos.modules.ai_orchestrator.orchestrator import (
     AIOrchestrator,
     AIProvider,
     MockAIProvider,
     UnavailableAIProvider,
+)
+from careos.modules.ai_orchestrator.voice import (
+    AIVoiceProvider,
+    MockAIVoiceProvider,
+    VoiceAIOrchestrator,
 )
 from careos.modules.device_gateway.adapters import AdapterRegistry, default_adapters
 from careos.modules.identity.service import AuthService
@@ -36,6 +42,8 @@ from careos.modules.notification_engine.providers import (
 )
 from careos.modules.realtime.broker import LocalRealtimeBroker, RedisRealtimeBroker
 from careos.modules.realtime.hub import ConnectionHub
+from careos.modules.telephony.provider import TwilioVoiceProvider
+from careos.modules.telephony.store import CallControlStore
 
 
 @dataclass(slots=True)
@@ -43,14 +51,38 @@ class ProviderRegistry:
     voice: VoiceProvider
     notifications: NotificationProvider
     ai: AIOrchestrator
+    #: In-call AI voice sessions (media bridge). None keeps older test wiring working.
+    voice_ai: VoiceAIOrchestrator | None = None
 
 
-def build_providers(settings: Settings) -> ProviderRegistry:
-    voice: VoiceProvider = (
-        MockVoiceProvider(settings.mock_voice_outcome)
-        if settings.voice_provider == "mock"
-        else DisabledVoiceProvider()
+def build_voice_ai(settings: Settings) -> VoiceAIOrchestrator:
+    provider: AIVoiceProvider | None = None
+    if settings.ai_voice_provider == "openai_realtime":
+        if settings.openai_api_key is None:
+            raise ValueError("CAREOS_AI_VOICE_PROVIDER=openai_realtime requires OPENAI_API_KEY")
+        provider = OpenAIRealtimeProvider(
+            api_key=settings.openai_api_key.get_secret_value(),
+            model=settings.openai_realtime_model,
+        )
+    elif settings.ai_voice_provider == "mock":
+        provider = MockAIVoiceProvider()
+    return VoiceAIOrchestrator(
+        provider, connect_timeout_seconds=settings.ai_connect_timeout_seconds
     )
+
+
+def build_providers(
+    settings: Settings, *, call_store: CallControlStore | None = None
+) -> ProviderRegistry:
+    voice: VoiceProvider
+    if settings.voice_provider == "twilio":
+        if call_store is None:
+            raise ValueError("the twilio voice provider needs database and realtime wiring")
+        voice = TwilioVoiceProvider(settings, call_store)
+    elif settings.voice_provider == "mock":
+        voice = MockVoiceProvider(settings.mock_voice_outcome)
+    else:
+        voice = DisabledVoiceProvider()
     notifications: NotificationProvider = (
         MockNotificationProvider()
         if settings.notification_provider == "mock"
@@ -65,6 +97,7 @@ def build_providers(settings: Settings) -> ProviderRegistry:
         voice=voice,
         notifications=notifications,
         ai=AIOrchestrator(ai_provider, timeout_seconds=settings.provider_timeout_seconds),
+        voice_ai=build_voice_ai(settings),
     )
 
 
@@ -128,6 +161,13 @@ def build_container(
     else:
         realtime = LocalRealtimeBroker(hub)
         rate_limiter = InMemoryRateLimiter()
+    if providers is None:
+        call_store = CallControlStore(
+            session_factory,
+            realtime,
+            publish_timeout_seconds=settings.realtime_publish_timeout_seconds,
+        )
+        providers = build_providers(settings, call_store=call_store)
     return Container(
         settings=settings,
         engine=engine,
@@ -136,7 +176,7 @@ def build_container(
         rate_limiter=rate_limiter,
         hub=hub,
         realtime=realtime,
-        providers=providers or build_providers(settings),
+        providers=providers,
         adapters=default_adapters(),
         auth=AuthService(settings, rate_limiter, session_factory),
         redis_circuit=redis_circuit,

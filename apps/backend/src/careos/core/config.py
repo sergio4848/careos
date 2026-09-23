@@ -10,7 +10,7 @@ from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -24,12 +24,18 @@ class Environment(StrEnum):
 _INSECURE_MARKERS = ("insecure", "change-me", "replace-with", "dev-only")
 
 
+def _alias(*names: str) -> AliasChoices:
+    """Accept both the CAREOS_-prefixed name and the vendor's conventional variable name."""
+    return AliasChoices(*names)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CAREOS_",
         env_file=None,
         extra="ignore",
         case_sensitive=False,
+        populate_by_name=True,
     )
 
     environment: Environment = Environment.DEVELOPMENT
@@ -65,11 +71,59 @@ class Settings(BaseSettings):
     gateway_internal_url: str = "http://localhost:8000"
 
     # --- providers -----------------------------------------------------------------
-    voice_provider: Literal["mock", "disabled"] = "mock"
+    voice_provider: Literal["mock", "twilio", "disabled"] = "mock"
     notification_provider: Literal["mock", "disabled"] = "mock"
     ai_provider: Literal["mock", "mock_unavailable", "disabled"] = "mock"
     mock_voice_outcome: Literal["no_answer", "answered_acknowledged", "failure"] = "no_answer"
     provider_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
+
+    # --- real telephony (Twilio) ------------------------------------------------------
+    #: Master safety switch. Unless explicitly true, TwilioVoiceProvider refuses every call.
+    real_telephony_enabled: bool = False
+    #: Outside production, real calls may only go to these E.164 numbers (comma separated).
+    telephony_allowed_numbers: Annotated[list[str], NoDecode] = []
+    twilio_account_sid: str | None = Field(
+        default=None, validation_alias=_alias("CAREOS_TWILIO_ACCOUNT_SID", "TWILIO_ACCOUNT_SID")
+    )
+    twilio_auth_token: SecretStr | None = Field(
+        default=None, validation_alias=_alias("CAREOS_TWILIO_AUTH_TOKEN", "TWILIO_AUTH_TOKEN")
+    )
+    twilio_from_number: str | None = Field(
+        default=None, validation_alias=_alias("CAREOS_TWILIO_FROM_NUMBER", "TWILIO_FROM_NUMBER")
+    )
+    #: UK-first deployment: Twilio's Ireland region keeps call control in the EU.
+    twilio_region: str | None = Field(
+        default="ie1", validation_alias=_alias("CAREOS_TWILIO_REGION", "TWILIO_REGION")
+    )
+    twilio_edge: str | None = Field(
+        default="dublin", validation_alias=_alias("CAREOS_TWILIO_EDGE", "TWILIO_EDGE")
+    )
+    twilio_api_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    twilio_ring_timeout_seconds: int = Field(default=30, ge=5, le=120)
+    #: Public HTTPS base URL Twilio can reach for status callbacks and the media WebSocket.
+    twilio_webhook_base_url: str | None = None
+    voice_call_max_duration_seconds: int = Field(default=240, ge=10, le=1800)
+    voice_call_poll_interval_seconds: float = Field(default=1.0, gt=0, le=10)
+    media_max_connections: int = Field(default=50, ge=1, le=1000)
+    media_max_message_bytes: int = Field(default=64_000, ge=1_000, le=1_000_000)
+
+    # --- AI voice ---------------------------------------------------------------------
+    ai_voice_provider: Literal["mock", "openai_realtime", "disabled"] = "mock"
+    openai_api_key: SecretStr | None = Field(
+        default=None, validation_alias=_alias("CAREOS_OPENAI_API_KEY", "OPENAI_API_KEY")
+    )
+    openai_realtime_model: str = Field(
+        default="gpt-realtime",
+        validation_alias=_alias("CAREOS_OPENAI_REALTIME_MODEL", "OPENAI_REALTIME_MODEL"),
+    )
+    ai_connect_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    ai_response_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    #: Spoken first; must always disclose that the caller is automated, never a human.
+    voice_greeting_template: str = (
+        "Hello {preferred_name}. This is the automated CareOS safety assistant responding "
+        "to your alert. I am an automated system, not a human operator. I can help connect "
+        "you with your care team."
+    )
 
     # --- worker / escalation ---------------------------------------------------------
     worker_poll_interval_seconds: float = Field(default=1.0, gt=0, le=60)
@@ -99,10 +153,26 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
 
-    @field_validator("cookie_domain", "redis_url", mode="before")
+    @field_validator(
+        "cookie_domain",
+        "redis_url",
+        "twilio_account_sid",
+        "twilio_from_number",
+        "twilio_region",
+        "twilio_edge",
+        "twilio_webhook_base_url",
+        mode="before",
+    )
     @classmethod
     def _empty_to_none(cls, value: object) -> object:
         return value or None
+
+    @field_validator("telephony_allowed_numbers", mode="before")
+    @classmethod
+    def _split_numbers(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [number.strip() for number in value.split(",") if number.strip()]
+        return value
 
     @model_validator(mode="after")
     def _enforce_production_safety(self) -> Settings:
@@ -123,6 +193,25 @@ class Settings(BaseSettings):
                 problems.append("CAREOS_CORS_ALLOWED_ORIGINS must not contain '*'")
             if problems:
                 raise ValueError("Unsafe production configuration: " + "; ".join(problems))
+        if self.real_telephony_enabled:
+            missing = [
+                name
+                for name, value in (
+                    ("TWILIO_ACCOUNT_SID", self.twilio_account_sid),
+                    ("TWILIO_AUTH_TOKEN", self.twilio_auth_token),
+                    ("TWILIO_FROM_NUMBER", self.twilio_from_number),
+                    ("CAREOS_TWILIO_WEBHOOK_BASE_URL", self.twilio_webhook_base_url),
+                )
+                if not value
+            ]
+            if missing:
+                raise ValueError("CAREOS_REAL_TELEPHONY_ENABLED requires: " + ", ".join(missing))
+            if not str(self.twilio_webhook_base_url).startswith("https://"):
+                raise ValueError("CAREOS_TWILIO_WEBHOOK_BASE_URL must be a public https:// URL")
+            if not self.is_production_like and not self.telephony_allowed_numbers:
+                raise ValueError(
+                    "Real telephony outside production requires CAREOS_TELEPHONY_ALLOWED_NUMBERS"
+                )
         return self
 
     @property

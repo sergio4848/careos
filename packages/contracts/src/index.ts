@@ -26,6 +26,11 @@ export type SessionView = Schemas["SessionView"];
 export type AuditLogView = Schemas["AuditLogView"];
 export type SimulatorEventRequest = Schemas["SimulatorEventRequest"];
 export type SimulatorEventResult = Schemas["SimulatorEventResult"];
+export type VoiceCallView = Schemas["VoiceCallView"];
+export type VoiceAdvisoryView = Schemas["VoiceAdvisoryView"];
+export type UrgencySignal = Schemas["UrgencySignal"];
+export type CallStatus = Schemas["CallStatus"];
+export type StructuredCallResponse = Schemas["StructuredCallResponse"];
 
 /** Realtime WebSocket message (packages/contracts/schemas/careos-realtime-message.v1.schema.json). */
 export type RealtimeMessageType = "incident.created" | "incident.updated" | "device.updated";

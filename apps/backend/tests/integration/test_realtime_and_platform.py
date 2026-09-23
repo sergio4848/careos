@@ -91,6 +91,8 @@ async def test_health_and_readiness(client_factory: ClientFactory) -> None:
         "redis": "not_configured",
         "realtime": "local_only",
         "escalation_worker": "ok",
+        "telephony": "mock",
+        "ai_voice": "mock",
     }
     assert (await client.get("/metrics")).status_code == 200
 

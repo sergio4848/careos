@@ -23,10 +23,12 @@ from starlette.testclient import TestClient
 from careos.api.app import create_app
 from careos.bootstrap import Container, ProviderRegistry, build_container
 from careos.core.config import Settings
+from careos.core.time import utcnow
 from careos.modules.escalation_engine.models import EscalationPolicy
 from careos.modules.identity.models import User
 from careos.modules.identity.rbac import Role
 from careos.modules.incident_engine.models import IncidentAssignment
+from careos.modules.notification_engine.models import Call, CallStatus, CallTargetType
 from careos.modules.service_users.models import TrustedContact
 from tests.factories import TEST_PASSWORD, ClientFactory, Tenant, sos_event
 from tests.integration.helpers import (
@@ -54,6 +56,9 @@ ENDPOINTS: tuple[tuple[str, str, Any], ...] = (
     ("GET", "/v1/incidents/{incident}", None),
     ("GET", "/v1/incidents/{incident}/timeline", None),
     ("POST", "/v1/incidents/{incident}/takeover", None),
+    ("GET", "/v1/incidents/{incident}/calls", None),
+    ("POST", "/v1/incidents/{incident}/calls/{voice_call}/stop", None),
+    ("POST", "/v1/incidents/{incident}/escalate-now", None),
     ("POST", "/v1/incidents/{incident}/resolve", {"category": "USER_SAFE", "notes": "x"}),
     ("POST", "/v1/incidents/{incident}/close", {}),
     ("GET", "/v1/service-users/{service_user}", None),
@@ -114,8 +119,21 @@ async def tenant_a_identifiers(
         user = await session.scalar(
             select(User.id).where(User.email == tenant.emails[Role.OPERATOR])
         )
+        voice_call = Call(
+            id=uuid.uuid4(),
+            organisation_id=tenant.organisation_id,
+            incident_id=uuid.UUID(incidents[0]["incident_id"]),
+            target_type=CallTargetType.SERVICE_USER,
+            service_user_id=tenant.service_user_id,
+            provider="twilio",
+            status=CallStatus.IN_PROGRESS,
+            started_at=utcnow(),
+        )
+        session.add(voice_call)
+        await session.commit()
     return {
         "incident": incidents[0]["incident_id"],
+        "voice_call": str(voice_call.id),
         "service_user": str(tenant.service_user_id),
         "contact": str(contact),
         "policy": str(policy),

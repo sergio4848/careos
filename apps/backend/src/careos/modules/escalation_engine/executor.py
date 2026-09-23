@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sqlalchemy import and_, exists, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
@@ -36,10 +37,14 @@ from careos.contracts.realtime import RealtimeMessageType, RealtimePublisher
 from careos.core.config import Settings
 from careos.core.logging import get_logger
 from careos.core.metrics import (
+    CALLS_ANSWERED,
+    CALLS_FAILED,
+    CALLS_STARTED,
     ESCALATION_ACTIONS,
     ESCALATION_FAILURES,
     PROVIDER_CALLS,
     PROVIDER_FAILURES,
+    PROVIDER_IDEMPOTENCY_CONFLICTS,
 )
 from careos.core.time import utcnow
 from careos.db.uow import UnitOfWork
@@ -56,6 +61,7 @@ from careos.modules.incident_engine.models import ActorType, Incident, IncidentE
 from careos.modules.incident_engine.service import IncidentEngine
 from careos.modules.incident_engine.state_machine import IncidentStatus
 from careos.modules.notification_engine.models import (
+    TERMINAL_CALL_STATUSES,
     Call,
     CallStatus,
     CallTargetType,
@@ -73,6 +79,9 @@ from careos.modules.notification_engine.providers import (
     VoiceProvider,
 )
 from careos.modules.service_users.models import ServiceUser, TrustedContact
+from careos.modules.telephony.models import CallEvent, CallEventType
+from careos.modules.telephony.security import mask_number, media_token_digest, new_media_token
+from careos.modules.telephony.store import event_row
 
 log = get_logger(__name__)
 
@@ -332,6 +341,15 @@ class EscalationExecutor:
             publish_timeout_seconds=self._settings.realtime_publish_timeout_seconds,
         )
 
+    def _voice_deadline_seconds(self) -> float:
+        """Executor bound for one voice call. A real provider (ringing plus a bounded
+        conversation) declares its own internal deadline and gets a small margin on top;
+        a provider without one is cut off at the short provider timeout."""
+        declared = getattr(self._voice, "operation_deadline_seconds", None)
+        if declared:
+            return float(declared) + 10
+        return self._settings.provider_timeout_seconds
+
     def _provider_failed(
         self, action: ClaimedAction, kind: str, provider: str, category: str
     ) -> None:
@@ -465,6 +483,13 @@ class EscalationExecutor:
             if target is None:
                 await self._skip_missing_target(session, uow, incident, scheduled, action)
                 return
+            ai_in_band = bool(getattr(self._voice, "carries_ai_session", False))
+            media_token = new_media_token() if automated and ai_in_band else None
+            subject_name: str | None = None
+            if not automated and incident.service_user_id is not None:
+                subject = await session.get(ServiceUser, incident.service_user_id)
+                if subject is not None:
+                    subject_name = subject.display_name
             call = Call(
                 id=uuid.uuid4(),
                 organisation_id=incident.organisation_id,
@@ -474,11 +499,28 @@ class EscalationExecutor:
                 trusted_contact_id=target.contact_id,
                 service_user_id=target.service_user_id,
                 provider=self._voice.name,
-                status=CallStatus.INITIATED,
+                status=CallStatus.QUEUED,
                 attempt=action.attempts,
+                to_number_masked=mask_number(target.phone),
+                media_token_digest=media_token_digest(media_token) if media_token else None,
                 started_at=utcnow(),
             )
             session.add(call)
+            session.add(
+                CallEvent(
+                    **event_row(
+                        organisation_id=incident.organisation_id,
+                        incident_id=incident.id,
+                        call_id=call.id,
+                        event_type=CallEventType.CALL_REQUESTED,
+                        data={"step_order": action.step_order, "attempt": action.attempts},
+                    )
+                )
+            )
+            # A real call outlives the default lease; extend it so no other worker
+            # reclaims this step (and dials again) while the call is legitimately live.
+            voice_deadline = self._voice_deadline_seconds()
+            scheduled.lease_expires_at = utcnow() + timedelta(seconds=voice_deadline + 60)
             attempt_note = (
                 f" (attempt {action.attempts}/{action.max_attempts})" if action.attempts > 1 else ""
             )
@@ -506,19 +548,30 @@ class EscalationExecutor:
                 uow, incident, RealtimeMessageType.INCIDENT_UPDATED, event_type.value
             )
             trigger_type = incident.trigger_type
-            await uow.commit()
+            provider_name, target_kind = self._voice.name, target.kind.value.lower()
+            uow.after_commit(lambda: CALLS_STARTED.labels(provider_name, target_kind).inc())
+            try:
+                await uow.commit()
+            except IntegrityError as exc:
+                # Provider idempotency (ADR-017): another worker already created the call
+                # row for this (scheduled_action, attempt) — never dial twice for it.
+                await uow.rollback()
+                if "uq_calls_scheduled_action_attempt" not in str(exc):
+                    raise
+                PROVIDER_IDEMPOTENCY_CONFLICTS.labels("voice_call_attempt").inc()
+                raise _SkipAction("duplicate_call_attempt") from None
 
         # Optional AI assistance runs alongside the call. It cannot delay, block or change the
         # deterministic flow: the call is placed and its outcome recorded independently of it.
         ai_task = (
             asyncio.create_task(self._run_ai_assist_isolated(action, trigger_type))
-            if automated and self._ai.enabled
+            if automated and self._ai.enabled and not ai_in_band
             else None
         )
         try:
             # Phase 2: provider call, outside any transaction
             try:
-                async with asyncio.timeout(self._settings.provider_timeout_seconds):
+                async with asyncio.timeout(voice_deadline):
                     result = await self._voice.place_call(
                         VoiceCallRequest(
                             organisation_id=action.organisation_id,
@@ -528,10 +581,13 @@ class EscalationExecutor:
                             purpose=(
                                 "AUTOMATED_WELFARE_CHECK" if automated else "TRUSTED_CONTACT_ALERT"
                             ),
+                            media_token=media_token,
+                            subject_name=subject_name,
                         )
                     )
             except Exception as exc:  # any provider failure is recorded, never propagated
                 category = failure_category(exc)
+                CALLS_FAILED.labels(self._voice.name, category).inc()
                 self._provider_failed(action, "voice", self._voice.name, category)
                 await self._record_failure_safely(action, error=category, call_id=call.id)
                 return
@@ -573,12 +629,21 @@ class EscalationExecutor:
             call = await session.get(Call, call_id)
             now = utcnow()
             if call is not None:
-                call.status = CallStatus(result.outcome.value)
-                call.acknowledged = result.acknowledged
-                call.provider_call_id = result.provider_call_id
-                call.ended_at = now
+                if call.status not in TERMINAL_CALL_STATUSES:
+                    # Mock providers resolve synchronously; real calls were already moved
+                    # to a terminal state by webhooks, which stays authoritative.
+                    call.status = CallStatus(result.outcome.value)
+                call.acknowledged = call.acknowledged or result.acknowledged
+                call.provider_call_sid = call.provider_call_sid or result.provider_call_id
+                call.ended_at = call.ended_at or now
             data = {"call_id": str(call_id), "outcome": result.outcome.value}
 
+            provider_name = self._voice.name
+            if result.outcome == VoiceCallOutcome.ANSWERED:
+                uow.after_commit(lambda: CALLS_ANSWERED.labels(provider_name).inc())
+            else:
+                not_reached = result.outcome.value.lower()
+                uow.after_commit(lambda: CALLS_FAILED.labels(provider_name, not_reached).inc())
             if result.outcome == VoiceCallOutcome.ANSWERED and result.acknowledged:
                 self._engine.append_event(
                     session,
@@ -642,14 +707,18 @@ class EscalationExecutor:
                     data=data,
                 )
             else:
+                suffix = {
+                    VoiceCallOutcome.BUSY: " (busy)",
+                    VoiceCallOutcome.CANCELLED: " (stopped by an operator)",
+                    VoiceCallOutcome.TIMED_OUT: " (maximum call duration reached)",
+                }.get(result.outcome, "")
                 self._engine.append_event(
                     session,
                     incident,
                     IncidentEventType.AUTOMATED_CALL_NO_ANSWER
                     if automated
                     else IncidentEventType.TRUSTED_CONTACT_NO_ANSWER,
-                    f"No answer from {target.name}"
-                    + (" (busy)" if result.outcome == VoiceCallOutcome.BUSY else ""),
+                    f"No confirmation from {target.name}{suffix}",
                     actor_type=ActorType.PROVIDER,
                     data=data,
                 )
@@ -826,9 +895,10 @@ class EscalationExecutor:
             now = utcnow()
             if call_id is not None:
                 call = await session.get(Call, call_id)
-                if call is not None:
+                if call is not None and call.status not in TERMINAL_CALL_STATUSES:
                     call.status = CallStatus.FAILED
                     call.failure_reason = error
+                    call.failure_category = error
                     call.ended_at = now
             if scheduled is None or scheduled.status != ScheduledActionStatus.RUNNING:
                 await session.commit()

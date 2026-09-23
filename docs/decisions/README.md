@@ -18,3 +18,8 @@ A superseded ADR is kept and marked, never deleted.
 | [011](ADR-011-dependency-policy.md) | Dependency and version policy | Accepted |
 | [012](ADR-012-transaction-boundaries-and-outbox.md) | Transaction boundaries, after-commit side effects and the outbox | Accepted |
 | [013](ADR-013-database-enforced-incident-invariants.md) | Database-enforced incident invariants | Accepted |
+| [014](ADR-014-telephony-provider-boundary.md) | Telephony provider boundary and real-call development safety | Accepted |
+| [015](ADR-015-twilio-media-streams.md) | Twilio Media Streams and media authentication | Accepted |
+| [016](ADR-016-ai-voice-safety-boundary.md) | AI voice safety boundary | Accepted |
+| [017](ADR-017-provider-and-webhook-idempotency.md) | Provider and webhook idempotency | Accepted |
+| [018](ADR-018-voice-privacy-and-retention.md) | Voice privacy and data retention | Accepted |

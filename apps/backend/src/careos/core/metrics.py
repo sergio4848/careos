@@ -87,6 +87,60 @@ AI_TIMEOUTS = Counter(
     ["provider"],
 )
 
+# --- voice / telephony ----------------------------------------------------------------------
+CALLS_STARTED = Counter(
+    "careos_calls_started_total",
+    "Outbound voice calls requested from a provider",
+    ["provider", "target_type"],
+)
+CALLS_ANSWERED = Counter(
+    "careos_calls_answered_total",
+    "Outbound voice calls answered by a person",
+    ["provider"],
+)
+CALLS_FAILED = Counter(
+    "careos_calls_failed_total",
+    "Outbound voice calls that ended without reaching anyone",
+    ["provider", "category"],
+)
+CALL_DURATION = Histogram(
+    "careos_call_duration_seconds",
+    "Duration of completed outbound voice calls",
+    ["provider"],
+    buckets=(5, 15, 30, 60, 120, 180, 240, 300, 600),
+)
+MEDIA_SESSIONS = Counter(
+    "careos_media_sessions_total",
+    "Telephony media stream sessions by outcome",
+    ["result"],
+)
+AI_VOICE_SESSIONS = Counter(
+    "careos_ai_voice_sessions_total",
+    "AI voice sessions by outcome",
+    ["provider", "result"],
+)
+AI_VOICE_FAILURES = Counter(
+    "careos_ai_voice_failures_total",
+    "AI voice sessions that failed (category: connect, timeout, provider_error, unexpected)",
+    ["provider", "category"],
+)
+AI_VOICE_LATENCY = Histogram(
+    "careos_ai_voice_latency_seconds",
+    "Time from media stream start to the first AI audio",
+    ["provider"],
+    buckets=(0.25, 0.5, 1, 2, 3, 5, 8, 13),
+)
+TWILIO_WEBHOOK_REJECTIONS = Counter(
+    "careos_twilio_webhook_rejections_total",
+    "Rejected Twilio webhook or media requests",
+    ["reason"],
+)
+PROVIDER_IDEMPOTENCY_CONFLICTS = Counter(
+    "careos_provider_idempotency_conflicts_total",
+    "Duplicate provider operations refused by idempotency keys",
+    ["kind"],
+)
+
 # --- realtime -----------------------------------------------------------------------------
 WEBSOCKET_CONNECTIONS = Gauge(
     "careos_websocket_connections",
