@@ -76,6 +76,7 @@ class TrustedContact(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Tenan
 
     __tablename__ = "trusted_contacts"
     __table_args__ = (
+        UniqueConstraint("organisation_id", "id", name="uq_trusted_contacts_organisation_id_id"),
         ForeignKeyConstraint(
             ["organisation_id", "service_user_id"],
             ["service_users.organisation_id", "service_users.id"],

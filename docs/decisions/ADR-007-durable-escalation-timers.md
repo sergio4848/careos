@@ -41,3 +41,21 @@ A small, explicit PostgreSQL-backed scheduler:
 * Polling interval (default 1 s) bounds scheduling precision; fine for human-scale escalation.
 * Throughput is bounded by PostgreSQL; a partial index on `(due_at) WHERE status IN (PENDING, RUNNING)`
   keeps claiming cheap. Re-evaluate at thousands of steps per second.
+
+## Update · 2026-09-17 (hardening review, see ADR-012)
+
+* **Ordered catch-up.** A step is claimed only when no earlier step of the same incident is
+  `RUNNING` or due. After worker downtime, steps run one at a time in policy order instead of
+  all at once. `OPERATOR_ESCALATION` steps (including the fail-safe) are exempt, so humans are
+  alerted immediately rather than after overdue automated contacts.
+* **Failure categories.** Provider failures are classified `timeout`, `provider_error` or
+  `unexpected` (any exception from a provider SDK is recorded, never propagated) and counted in
+  `careos_provider_failures_total` / `careos_escalation_failures_total`.
+* **Failure while recording a failure** (e.g. the database is briefly unavailable) leaves the
+  step `RUNNING`; it is reclaimed when the lease expires.
+* **Lag is visible.** `/ready` reports `escalation_worker: lagging` and the dashboard summary
+  returns `escalation_overdue` when steps are overdue beyond
+  `CAREOS_ESCALATION_OVERDUE_AFTER_SECONDS` (60 s); the console tells operators to act manually.
+* `scheduled_actions` is formally the transactional outbox for provider work (ADR-012); the
+  database now also enforces `running ⇒ lease` and valid attempt counters (ADR-013).
+

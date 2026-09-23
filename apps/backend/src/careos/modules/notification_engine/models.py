@@ -43,6 +43,18 @@ class Call(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
             name="fk_calls_incident_same_org",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["organisation_id", "trusted_contact_id"],
+            ["trusted_contacts.organisation_id", "trusted_contacts.id"],
+            name="fk_calls_trusted_contact_same_org",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organisation_id", "service_user_id"],
+            ["service_users.organisation_id", "service_users.id"],
+            name="fk_calls_service_user_same_org",
+            ondelete="RESTRICT",
+        ),
     )
 
     incident_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
@@ -50,12 +62,8 @@ class Call(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base):
         Uuid, ForeignKey("scheduled_actions.id", ondelete="SET NULL")
     )
     target_type: Mapped[CallTargetType] = mapped_column(str_enum(CallTargetType, "call_target"))
-    trusted_contact_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("trusted_contacts.id", ondelete="RESTRICT")
-    )
-    service_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("service_users.id", ondelete="RESTRICT")
-    )
+    trusted_contact_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    service_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     provider: Mapped[str] = mapped_column(String(40))
     provider_call_id: Mapped[str | None] = mapped_column(String(128))
     status: Mapped[CallStatus] = mapped_column(str_enum(CallStatus, "call_status"))

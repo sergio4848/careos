@@ -18,6 +18,9 @@ def create_engine(settings: Settings) -> AsyncEngine:
         pool_pre_ping=True,
         pool_recycle=1800,
         echo=settings.database_echo,
+        # Never render bound parameters (names, phone numbers, notes) into exception messages,
+        # which end up in logs and tracebacks.
+        hide_parameters=True,
         connect_args={"server_settings": {"application_name": "careos"}},
     )
 

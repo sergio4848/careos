@@ -15,6 +15,7 @@ x-backend-env: &backend-env
   # Used by `docker compose run --rm api pytest` (database created by infra/docker/postgres/init)
   CAREOS_TEST_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-careos}:${POSTGRES_PASSWORD:-careos-dev-only}@postgres:5432/careos_test
   CAREOS_REDIS_URL: redis://redis:6379/0
+  CAREOS_TEST_REDIS_URL: redis://redis:6379/15
   CAREOS_SECRET_KEY: ${CAREOS_SECRET_KEY:-dev-insecure-secret-key-do-not-use-in-production}
   CAREOS_SESSION_TTL_MINUTES: ${CAREOS_SESSION_TTL_MINUTES:-720}
   CAREOS_SESSION_IDLE_TIMEOUT_MINUTES: ${CAREOS_SESSION_IDLE_TIMEOUT_MINUTES:-120}

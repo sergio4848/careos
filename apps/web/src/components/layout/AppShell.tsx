@@ -10,6 +10,7 @@ import { useRealtimeStatus } from "@/lib/realtime/RealtimeProvider";
 
 import styles from "./AppShell.module.css";
 import { ConnectionIndicator } from "./ConnectionIndicator";
+import { SystemStatusBanner } from "./SystemStatusBanner";
 
 interface NavItem {
   href: string;
@@ -71,6 +72,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </button>
         </div>
       </header>
+      <SystemStatusBanner />
       <div aria-live="assertive" aria-atomic="true" className="visually-hidden">
         {announcement}
       </div>

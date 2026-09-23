@@ -14,6 +14,7 @@ from starlette.websockets import WebSocketDisconnect
 from careos.api.app import create_app
 from careos.bootstrap import Container, ProviderRegistry, build_container
 from careos.core.config import Settings
+from careos.db.schema import EXPECTED_SCHEMA_REVISION
 from careos.modules.identity.rbac import Role
 from tests.factories import TEST_PASSWORD, ClientFactory, Tenant, sos_event
 from tests.integration.helpers import GATEWAY_HEADER, audit_actions, raise_sos
@@ -82,7 +83,15 @@ async def test_health_and_readiness(client_factory: ClientFactory) -> None:
     assert (await client.get("/health")).json() == {"status": "ok"}
     ready = await client.get("/ready")
     assert ready.status_code == 200
-    assert ready.json() == {"status": "ready", "database": "ok", "redis": "not_configured"}
+    assert ready.json() == {
+        "status": "ready",
+        "database": "ok",
+        "migrations": "current",
+        "expected_schema_revision": EXPECTED_SCHEMA_REVISION,
+        "redis": "not_configured",
+        "realtime": "local_only",
+        "escalation_worker": "ok",
+    }
     assert (await client.get("/metrics")).status_code == 200
 
 

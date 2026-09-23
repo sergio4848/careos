@@ -1,28 +1,38 @@
 """Realtime fan-out across processes.
 
 API replicas and the worker publish to Redis pub/sub; every API replica subscribes and
-delivers to its local sockets. If Redis is unavailable the API delivers locally so a
-single-node deployment keeps working; consoles additionally poll while disconnected.
-Redis is *never* on the critical path of incident creation or escalation.
+delivers to its local sockets. Redis is *never* on the critical path of incident creation or
+escalation: publishing happens after the database commit and every failure is contained here.
+
+Degraded behaviour (ADR-008, ADR-012):
+* publish fails -> the circuit opens, the message is delivered to this process's sockets
+  only, ``careos_realtime_delivery_failures_total`` is incremented and the broker reports
+  ``degraded`` in ``/ready``;
+* while the circuit is open, publishes skip Redis immediately (no per-request timeouts);
+* consoles reconcile from the REST API, so a lost notification delays but never hides data.
 """
 
 from __future__ import annotations
 
 import asyncio
+from typing import Literal
 
 from pydantic import ValidationError
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from careos.contracts.realtime import RealtimeMessage
+from careos.core.circuit import CircuitBreaker
 from careos.core.logging import get_logger
-from careos.core.metrics import REALTIME_PUBLISH_FAILURES
+from careos.core.metrics import REALTIME_DELIVERY_FAILURES
 from careos.modules.realtime.hub import ConnectionHub
 
 log = get_logger(__name__)
 
 CHANNEL_PREFIX = "careos:realtime:org:"
 _POLL_SECONDS = 5.0
+
+RealtimeState = Literal["ok", "degraded", "local_only"]
 
 
 def channel_for(message: RealtimeMessage) -> str:
@@ -35,24 +45,52 @@ class LocalRealtimeBroker:
     def __init__(self, hub: ConnectionHub | None) -> None:
         self._hub = hub
 
+    @property
+    def state(self) -> RealtimeState:
+        return "local_only"
+
     async def publish(self, message: RealtimeMessage) -> None:
         if self._hub is not None:
             await self._hub.deliver(message)
 
 
 class RedisRealtimeBroker:
-    def __init__(self, redis: Redis, hub: ConnectionHub | None) -> None:
+    def __init__(
+        self, redis: Redis, hub: ConnectionHub | None, circuit: CircuitBreaker | None = None
+    ) -> None:
         self._redis = redis
         self._hub = hub
+        self.circuit = circuit or CircuitBreaker("redis")
+
+    @property
+    def state(self) -> RealtimeState:
+        return "degraded" if self.circuit.degraded else "ok"
 
     async def publish(self, message: RealtimeMessage) -> None:
+        if not self.circuit.allow():
+            REALTIME_DELIVERY_FAILURES.labels(stage="broker_unavailable").inc()
+            await self._deliver_locally(message)
+            return
         try:
             await self._redis.publish(channel_for(message), message.model_dump_json())
         except (RedisError, OSError) as exc:
-            REALTIME_PUBLISH_FAILURES.inc()
-            log.warning("realtime.publish_failed", error=type(exc).__name__)
-            if self._hub is not None:
-                await self._hub.deliver(message)
+            self.circuit.record_failure()
+            REALTIME_DELIVERY_FAILURES.labels(stage="broker_publish").inc()
+            log.warning(
+                "realtime.publish_failed",
+                failure_category=type(exc).__name__,
+                message_type=message.type.value,
+                organisation_id=str(message.organisation_id),
+                incident_id=str(message.incident_id) if message.incident_id else None,
+                fallback="local_sockets_only",
+            )
+            await self._deliver_locally(message)
+            return
+        self.circuit.record_success()
+
+    async def _deliver_locally(self, message: RealtimeMessage) -> None:
+        if self._hub is not None:
+            await self._hub.deliver(message)
 
     async def run_subscriber(self) -> None:
         """Deliver messages from Redis to local sockets until cancelled. Reconnects with backoff."""
@@ -81,6 +119,6 @@ class RedisRealtimeBroker:
             except asyncio.CancelledError:
                 raise
             except (RedisError, OSError) as exc:
-                log.warning("realtime.subscriber_disconnected", error=type(exc).__name__)
+                log.warning("realtime.subscriber_disconnected", failure_category=type(exc).__name__)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)

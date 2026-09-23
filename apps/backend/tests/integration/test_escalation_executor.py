@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import select, update
 
@@ -16,40 +16,21 @@ from careos.modules.ai_orchestrator.orchestrator import (
 )
 from careos.modules.devices.models import ConnectionStatus, DeviceConnection
 from careos.modules.devices.service import mark_stale_devices_offline
-from careos.modules.escalation_engine.executor import EscalationExecutor
 from careos.modules.escalation_engine.models import ScheduledAction, ScheduledActionStatus
 from careos.modules.identity.rbac import Role
-from careos.modules.incident_engine.models import Incident, IncidentEvent
+from careos.modules.incident_engine.models import IncidentEvent
 from careos.modules.notification_engine.models import Call, CallStatus
 from careos.modules.notification_engine.providers import MockVoiceProvider
 from tests.factories import ClientFactory, Tenant, sos_event
-from tests.integration.helpers import count, event_types, raise_sos, send_event
-
-
-def make_executor(
-    container: Container, providers: ProviderRegistry, **settings_overrides: object
-) -> EscalationExecutor:
-    settings = container.settings.model_copy(update=settings_overrides)
-    return EscalationExecutor(
-        settings=settings,
-        session_factory=container.session_factory,
-        publisher=container.realtime,
-        voice=providers.voice,
-        notifications=providers.notifications,
-        ai=providers.ai,
-        worker_id=f"test-worker-{uuid.uuid4().hex[:6]}",
-    )
-
-
-async def load_incident(container: Container, incident_id: str) -> Incident:
-    async with container.session_factory() as session:
-        incident = await session.get(Incident, uuid.UUID(incident_id))
-        assert incident is not None
-        return incident
-
-
-def at(incident: Incident, seconds: int) -> datetime:
-    return incident.created_at + timedelta(seconds=seconds)
+from tests.integration.helpers import (
+    at,
+    count,
+    event_types,
+    load_incident,
+    make_executor,
+    raise_sos,
+    send_event,
+)
 
 
 async def test_full_escalation_ladder(
@@ -233,7 +214,9 @@ async def test_concurrent_workers_never_claim_the_same_action(
     workers = [make_executor(container, providers, worker_batch_size=3) for _ in range(4)]
     batches = await asyncio.gather(*(w.claim(later) for w in workers))
     ids = [action.id for batch in batches for action in batch]
-    assert len(ids) == len(set(ids)) == 9  # 4 + 4 + 1 fail-safe step
+    # Per incident only the next step in policy order is claimable, plus operator alerts:
+    # 2 x (first contact step + operator step) + 1 fail-safe step for the unassigned device.
+    assert len(ids) == len(set(ids)) == 5
 
 
 async def test_expired_lease_is_reclaimed_after_worker_crash(

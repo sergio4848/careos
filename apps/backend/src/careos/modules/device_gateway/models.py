@@ -5,7 +5,14 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, Uuid
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKeyConstraint,
+    String,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,18 +47,37 @@ class DeviceEventReceipt(UUIDPrimaryKeyMixin, TimestampMixin, TenantMixin, Base)
     __tablename__ = "device_event_receipts"
     __table_args__ = (
         UniqueConstraint("organisation_id", "event_id", name="uq_device_event_receipts_org_event"),
+        UniqueConstraint(
+            "organisation_id", "id", name="uq_device_event_receipts_organisation_id_id"
+        ),
+        ForeignKeyConstraint(
+            ["organisation_id", "device_id"],
+            ["devices.organisation_id", "devices.id"],
+            name="fk_device_event_receipts_device_same_org",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["organisation_id", "incident_id"],
+            ["incidents.organisation_id", "incidents.id"],
+            name="fk_device_event_receipts_incident_same_org",
+            ondelete="RESTRICT",
+            use_alter=True,
+        ),
+        # An accepted receipt names its device; incident outcomes name their incident.
+        CheckConstraint("(outcome IS NULL) = (device_id IS NULL)", name="outcome_has_device"),
+        CheckConstraint(
+            "CASE WHEN outcome IN ('INCIDENT_CREATED', 'ATTACHED_TO_INCIDENT') "
+            "THEN incident_id IS NOT NULL ELSE incident_id IS NULL END",
+            name="incident_outcome_linked",
+        ),
     )
 
     event_id: Mapped[str] = mapped_column(String(128))
     adapter: Mapped[str] = mapped_column(String(40))
     event_type: Mapped[str] = mapped_column(String(40))
     device_external_id: Mapped[str] = mapped_column(String(64))
-    device_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("devices.id", ondelete="RESTRICT")
-    )
-    incident_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("incidents.id", ondelete="RESTRICT", use_alter=True)
-    )
+    device_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    incident_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     outcome: Mapped[ReceiptOutcome | None] = mapped_column(
         str_enum(ReceiptOutcome, "receipt_outcome")
     )

@@ -12,6 +12,13 @@ while talking to an external provider:
 Failures are retried with exponential backoff; when retries are exhausted a fail-safe
 operator alert is scheduled immediately. Delivery is at-least-once: a worker crash
 between phases 2 and 3 can repeat a call, which is preferable to missing one.
+
+Ordering: steps of one incident run one at a time in ``step_order`` (a worker that was down
+catches up in policy order instead of firing every overdue step at once). Operator alerts are
+exempt: bringing in a human is never held back behind an automated contact attempt.
+
+Provider failures are recorded (timeline, call row, metrics, logs) and escalate towards
+humans. They never delete, roll back, resolve or close an incident.
 """
 
 from __future__ import annotations
@@ -21,13 +28,19 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, exists, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import aliased
 
 from careos.contracts.realtime import RealtimeMessageType, RealtimePublisher
 from careos.core.config import Settings
 from careos.core.logging import get_logger
-from careos.core.metrics import ESCALATION_ACTIONS, PROVIDER_CALLS
+from careos.core.metrics import (
+    ESCALATION_ACTIONS,
+    ESCALATION_FAILURES,
+    PROVIDER_CALLS,
+    PROVIDER_FAILURES,
+)
 from careos.core.time import utcnow
 from careos.db.uow import UnitOfWork
 from careos.modules.ai_orchestrator.models import AISession, AISessionPurpose, AISessionStatus
@@ -98,6 +111,15 @@ class _Target:
     relationship: str | None = None
 
 
+def failure_category(exc: BaseException) -> str:
+    """Low-cardinality failure category for metrics and logs (never the error message)."""
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    if isinstance(exc, ProviderError):
+        return "provider_error"
+    return "unexpected"
+
+
 class _SkipAction(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
@@ -141,7 +163,23 @@ class EscalationExecutor:
         return len(claimed)
 
     async def claim(self, now: datetime) -> list[ClaimedAction]:
-        """Atomically lease due actions. ``SKIP LOCKED`` lets many workers run safely."""
+        """Atomically lease due actions. ``SKIP LOCKED`` lets many workers run safely.
+
+        A step is claimable only when no earlier step of the same incident is running or
+        due (operator alerts excepted), so catch-up after downtime keeps the policy order.
+        """
+        earlier = aliased(ScheduledAction)
+        earlier_step_open = exists().where(
+            earlier.incident_id == ScheduledAction.incident_id,
+            earlier.step_order < ScheduledAction.step_order,
+            or_(
+                earlier.status == ScheduledActionStatus.RUNNING,
+                and_(
+                    earlier.status == ScheduledActionStatus.PENDING,
+                    earlier.due_at <= now,
+                ),
+            ),
+        )
         due = (
             select(ScheduledAction.id)
             .where(
@@ -154,9 +192,13 @@ class EscalationExecutor:
                         ScheduledAction.status == ScheduledActionStatus.RUNNING,
                         ScheduledAction.lease_expires_at < now,
                     ),
-                )
+                ),
+                or_(
+                    ScheduledAction.action_type == EscalationActionType.OPERATOR_ESCALATION,
+                    ~earlier_step_open,
+                ),
             )
-            .order_by(ScheduledAction.due_at)
+            .order_by(ScheduledAction.due_at, ScheduledAction.step_order)
             .limit(self._settings.worker_batch_size)
             .with_for_update(skip_locked=True)
         )
@@ -199,11 +241,40 @@ class EscalationExecutor:
             ESCALATION_ACTIONS.labels(action.action_type.value, "completed").inc()
         except _SkipAction as skip:
             ESCALATION_ACTIONS.labels(action.action_type.value, "skipped").inc()
-            log.info("escalation.skipped", action_id=str(action.id), reason=skip.reason)
+            log.info(
+                "escalation.skipped",
+                action_id=str(action.id),
+                incident_id=str(action.incident_id),
+                organisation_id=str(action.organisation_id),
+                reason=skip.reason,
+            )
         except Exception as exc:
             ESCALATION_ACTIONS.labels(action.action_type.value, "error").inc()
-            log.exception("escalation.action_error", action_id=str(action.id))
-            await self._handle_failure(action, error=f"{type(exc).__name__}", call_id=None)
+            log.exception(
+                "escalation.action_error",
+                action_id=str(action.id),
+                incident_id=str(action.incident_id),
+                organisation_id=str(action.organisation_id),
+                failure_category="unexpected",
+            )
+            await self._record_failure_safely(action, error=type(exc).__name__, call_id=None)
+
+    async def _record_failure_safely(
+        self, action: ClaimedAction, *, error: str, call_id: uuid.UUID | None
+    ) -> None:
+        """Record a failed attempt. If even that fails (e.g. database outage) the action stays
+        RUNNING and is reclaimed when its lease expires, so the step is never silently lost."""
+        try:
+            await self._handle_failure(action, error=error, call_id=call_id)
+        except Exception:
+            ESCALATION_FAILURES.labels(action.action_type.value, "record_failed").inc()
+            log.exception(
+                "escalation.failure_not_recorded",
+                action_id=str(action.id),
+                incident_id=str(action.incident_id),
+                organisation_id=str(action.organisation_id),
+                recovery="lease_expiry",
+            )
 
     async def _begin(
         self, session: AsyncSession, action: ClaimedAction
@@ -255,7 +326,28 @@ class EscalationExecutor:
         scheduled.updated_at = now
 
     def _uow(self, session: AsyncSession) -> UnitOfWork:
-        return UnitOfWork(session, self._publisher)
+        return UnitOfWork(
+            session,
+            self._publisher,
+            publish_timeout_seconds=self._settings.realtime_publish_timeout_seconds,
+        )
+
+    def _provider_failed(
+        self, action: ClaimedAction, kind: str, provider: str, category: str
+    ) -> None:
+        PROVIDER_CALLS.labels(kind, provider, "error").inc()
+        PROVIDER_FAILURES.labels(kind, provider, category).inc()
+        log.warning(
+            "escalation.provider_failed",
+            provider_kind=kind,
+            provider=provider,
+            failure_category=category,
+            action_id=str(action.id),
+            action_type=action.action_type.value,
+            incident_id=str(action.incident_id),
+            organisation_id=str(action.organisation_id),
+            attempt=action.attempts,
+        )
 
     # ------------------------------------------------------------------ OPERATOR_ESCALATION
 
@@ -438,10 +530,10 @@ class EscalationExecutor:
                             ),
                         )
                     )
-            except (ProviderError, TimeoutError) as exc:
-                PROVIDER_CALLS.labels("voice", self._voice.name, "error").inc()
-                reason = "timeout" if isinstance(exc, TimeoutError) else "provider_error"
-                await self._handle_failure(action, error=reason, call_id=call.id)
+            except Exception as exc:  # any provider failure is recorded, never propagated
+                category = failure_category(exc)
+                self._provider_failed(action, "voice", self._voice.name, category)
+                await self._record_failure_safely(action, error=category, call_id=call.id)
                 return
             PROVIDER_CALLS.labels("voice", self._voice.name, "ok").inc()
 
@@ -455,7 +547,14 @@ class EscalationExecutor:
         try:
             await self._run_ai_assist(action, trigger_type)
         except Exception:  # AI bookkeeping must never affect the deterministic escalation
-            log.exception("escalation.ai_assist_error", action_id=str(action.id))
+            log.exception(
+                "escalation.ai_assist_error",
+                action_id=str(action.id),
+                incident_id=str(action.incident_id),
+                organisation_id=str(action.organisation_id),
+                provider=self._ai.provider_name,
+                failure_category="unexpected",
+            )
 
     async def _record_call_result(
         self,
@@ -663,9 +762,10 @@ class EscalationExecutor:
                         variables={"reference": reference},
                     )
                 )
-        except (ProviderError, TimeoutError) as exc:
-            PROVIDER_CALLS.labels("notification", self._notifications.name, "error").inc()
-            await self._handle_failure(action, error=type(exc).__name__, call_id=None)
+        except Exception as exc:  # any provider failure is recorded, never propagated
+            category = failure_category(exc)
+            self._provider_failed(action, "notification", self._notifications.name, category)
+            await self._record_failure_safely(action, error=category, call_id=None)
             return
         PROVIDER_CALLS.labels("notification", self._notifications.name, "ok").inc()
 
@@ -735,6 +835,9 @@ class EscalationExecutor:
                 return
 
             retrying = action.attempts < action.max_attempts
+            ESCALATION_FAILURES.labels(
+                action.action_type.value, "retrying" if retrying else "exhausted"
+            ).inc()
             failure_event = (
                 IncidentEventType.NOTIFICATION_FAILED
                 if action.action_type == EscalationActionType.NOTIFY_TRUSTED_CONTACT

@@ -10,7 +10,7 @@ from starlette.websockets import WebSocket
 
 from careos.contracts.realtime import RealtimeMessage
 from careos.core.logging import get_logger
-from careos.core.metrics import WEBSOCKET_CONNECTIONS
+from careos.core.metrics import REALTIME_DELIVERY_FAILURES, WEBSOCKET_CONNECTIONS
 
 log = get_logger(__name__)
 
@@ -54,5 +54,10 @@ class ConnectionHub:
         )
         for websocket, result in zip(targets, results, strict=True):
             if isinstance(result, BaseException):
-                log.info("realtime.drop_slow_or_closed_socket", error=type(result).__name__)
+                REALTIME_DELIVERY_FAILURES.labels(stage="socket_send").inc()
+                log.info(
+                    "realtime.drop_slow_or_closed_socket",
+                    failure_category=type(result).__name__,
+                    organisation_id=str(message.organisation_id),
+                )
                 await self.unregister(message.organisation_id, websocket)

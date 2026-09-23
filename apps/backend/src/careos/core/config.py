@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     database_pool_size: int = Field(default=10, ge=1, le=100)
     database_echo: bool = False
     redis_url: str | None = "redis://localhost:6379/0"
+    #: Redis is optional (rate limiting, realtime fan-out). Keep its timeouts short so an
+    #: unreachable Redis costs one short wait before the circuit opens, not one per request.
+    redis_timeout_seconds: float = Field(default=0.5, gt=0, le=10)
+    redis_circuit_reset_seconds: float = Field(default=5.0, gt=0, le=300)
+    #: Upper bound on post-commit realtime publishing per message (never blocks safety work).
+    realtime_publish_timeout_seconds: float = Field(default=1.0, gt=0, le=10)
 
     # --- security ----------------------------------------------------------------
     secret_key: SecretStr = SecretStr("dev-insecure-secret-key-do-not-use-in-production")
@@ -71,6 +77,9 @@ class Settings(BaseSettings):
     worker_lease_seconds: int = Field(default=60, ge=5)
     escalation_max_attempts: int = Field(default=3, ge=1, le=10)
     escalation_retry_base_seconds: float = Field(default=5.0, ge=0)
+    #: A step still waiting this long after it was due means the worker is down or saturated:
+    #: /ready reports the worker as lagging and consoles tell operators to act manually.
+    escalation_overdue_after_seconds: int = Field(default=60, ge=5)
     device_offline_after_seconds: int = Field(default=86_400, ge=60)
     device_low_battery_threshold: int = Field(default=20, ge=1, le=100)
     device_sweep_interval_seconds: float = Field(default=30.0, gt=0)

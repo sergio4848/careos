@@ -14,6 +14,7 @@ from typing import Protocol
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
+from careos.core.circuit import CircuitBreaker
 from careos.core.logging import get_logger
 
 log = get_logger(__name__)
@@ -55,11 +56,19 @@ class InMemoryRateLimiter:
 
 
 class RedisRateLimiter:
-    def __init__(self, redis: Redis, fallback: InMemoryRateLimiter | None = None) -> None:
+    def __init__(
+        self,
+        redis: Redis,
+        fallback: InMemoryRateLimiter | None = None,
+        circuit: CircuitBreaker | None = None,
+    ) -> None:
         self._redis = redis
         self._fallback = fallback or InMemoryRateLimiter()
+        self._circuit = circuit or CircuitBreaker("redis")
 
     async def hit(self, key: str, limit: int, window_seconds: int) -> RateLimitDecision:
+        if not self._circuit.allow():
+            return await self._fallback.hit(key, limit, window_seconds)
         bucket = int(time.time() // window_seconds)
         redis_key = f"careos:ratelimit:{key}:{bucket}"
         try:
@@ -68,12 +77,17 @@ class RedisRateLimiter:
                 pipe.expire(redis_key, window_seconds + 1)
                 count, _ = await pipe.execute()
         except (RedisError, OSError) as exc:
-            log.warning("rate_limiter.redis_unavailable", error=type(exc).__name__)
+            self._circuit.record_failure()
+            log.warning("rate_limiter.redis_unavailable", failure_category=type(exc).__name__)
             return await self._fallback.hit(key, limit, window_seconds)
+        self._circuit.record_success()
         retry_after = max(1, window_seconds - int(time.time()) % window_seconds)
         return RateLimitDecision(allowed=int(count) <= limit, retry_after_seconds=retry_after)
 
     async def reset(self, key: str) -> None:
+        if not self._circuit.allow():
+            await self._fallback.reset(key)
+            return
         try:
             keys = [k async for k in self._redis.scan_iter(match=f"careos:ratelimit:{key}:*")]
             if keys:

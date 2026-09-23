@@ -104,6 +104,11 @@ AWAITING_CLOSURE_STATUSES: frozenset[IncidentStatus] = frozenset(
     {S.RESOLVED, S.FALSE_ALARM, S.CANCELLED}
 )
 TERMINAL_STATUSES: frozenset[IncidentStatus] = frozenset({S.CLOSED})
+#: Outcomes only a human operator may record. Automation, providers and AI can alert and
+#: escalate, but never take ownership, resolve, cancel or close (enforced in the database too).
+HUMAN_ONLY_STATUSES: frozenset[IncidentStatus] = frozenset(
+    {S.IN_PROGRESS, S.RESOLVED, S.FALSE_ALARM, S.CANCELLED, S.CLOSED}
+)
 #: Statuses from which an operator may take ownership.
 TAKEOVER_STATUSES: frozenset[IncidentStatus] = frozenset(
     {S.OPEN, S.CONTACTING, S.ACKNOWLEDGED, S.ESCALATED, S.FAILED, S.DEVICE_ERROR, S.IN_PROGRESS}

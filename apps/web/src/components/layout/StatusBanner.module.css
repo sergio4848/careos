@@ -1,0 +1,55 @@
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  flex-wrap: wrap;
+  padding: 0.65rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.inline {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.critical {
+  background: var(--critical-bg);
+  border-color: var(--critical-border);
+  color: var(--text);
+}
+
+.warning {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  color: var(--text);
+}
+
+.title {
+  font-weight: 700;
+}
+
+.critical .title {
+  color: var(--critical);
+}
+
+.warning .title {
+  color: var(--warning);
+}
+
+.detail {
+  flex: 1;
+  min-width: 16rem;
+  color: var(--text-muted);
+}
+
+.freshness {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-subtle);
+}
+
+.stale {
+  color: var(--warning);
+  font-weight: 650;
+}

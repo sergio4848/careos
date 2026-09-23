@@ -30,10 +30,17 @@ export const queryKeys = {
   audit: (resourceId?: string) => ["audit", resourceId ?? "all"] as const,
 };
 
-/** While the WebSocket is down, fall back to polling so the board never silently goes stale. */
-function usePollingFallback(intervalMs = 10_000): number | false {
+/** Reconcile with the API even while live (a notification can be lost); poll faster when not. */
+export const RECONCILE_LIVE_MS = 30_000;
+export const RECONCILE_DEGRADED_MS = 10_000;
+
+export function reconciliationInterval(status: string): number {
+  return status === "live" ? RECONCILE_LIVE_MS : RECONCILE_DEGRADED_MS;
+}
+
+function usePollingFallback(): number {
   const { status } = useRealtimeStatus();
-  return status === "live" ? false : intervalMs;
+  return reconciliationInterval(status);
 }
 
 export function useDashboardSummary() {

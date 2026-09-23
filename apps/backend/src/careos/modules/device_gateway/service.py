@@ -22,7 +22,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from careos.contracts.device_events import CareOSEvent
+from careos.contracts.device_events import CareOSEvent, DeviceEventType
 from careos.contracts.realtime import RealtimeMessage, RealtimeMessageType
 from careos.core.config import Settings
 from careos.core.errors import (
@@ -31,7 +31,13 @@ from careos.core.errors import (
     RateLimitedError,
     ValidationFailedError,
 )
-from careos.core.metrics import GATEWAY_EVENTS
+from careos.core.logging import get_logger
+from careos.core.metrics import (
+    GATEWAY_DUPLICATE_EVENTS,
+    GATEWAY_EVENTS_RECEIVED,
+    GATEWAY_REJECTIONS,
+    SOS_RECEIVED,
+)
 from careos.core.rate_limit import RateLimiter
 from careos.core.security import constant_time_equals, gateway_key_digest, parse_gateway_key
 from careos.core.time import utcnow
@@ -49,6 +55,8 @@ from careos.modules.devices.models import ConnectionStatus, Device, DeviceConnec
 from careos.modules.incident_engine.models import Incident
 from careos.modules.incident_engine.service import IncidentEngine
 from careos.modules.organisations.models import Organisation, OrganisationStatus
+
+log = get_logger(__name__)
 
 GATEWAY_KEY_HEADER = "X-CareOS-Gateway-Key"
 
@@ -93,8 +101,16 @@ class DeviceGatewayService:
 
     # ------------------------------------------------------------------ authentication
 
+    def adapter_label(self, adapter_name: str) -> str:
+        """Metric label for an adapter path segment (bounded: unknown names collapse)."""
+        return adapter_name if adapter_name in self._adapters.names else "unregistered"
+
     async def authenticate(
-        self, session: AsyncSession, raw_key: str | None, context: AuditContext
+        self,
+        session: AsyncSession,
+        raw_key: str | None,
+        context: AuditContext,
+        adapter_name: str = "unregistered",
     ) -> GatewayCredential:
         parsed = parse_gateway_key(raw_key) if raw_key else None
         credential: GatewayCredential | None = None
@@ -112,6 +128,13 @@ class DeviceGatewayService:
         secret = self._settings.secret_key.get_secret_value()
         digest = gateway_key_digest(secret, parsed.raw) if parsed else ""
         if credential is None or not constant_time_equals(credential.key_digest, digest):
+            GATEWAY_REJECTIONS.labels(self.adapter_label(adapter_name), "invalid_credential").inc()
+            log.warning(
+                "gateway.rejected",
+                adapter=self.adapter_label(adapter_name),
+                failure_category="invalid_credential",
+                key_prefix=parsed.prefix if parsed else None,
+            )
             await audit.record_isolated(
                 self._session_factory,
                 AuditEntry(
@@ -128,6 +151,13 @@ class DeviceGatewayService:
             f"gateway:{credential.id}", self._settings.gateway_max_requests_per_minute, 60
         )
         if not decision.allowed:
+            GATEWAY_REJECTIONS.labels(self.adapter_label(adapter_name), "rate_limited").inc()
+            log.warning(
+                "gateway.rejected",
+                adapter=self.adapter_label(adapter_name),
+                failure_category="rate_limited",
+                organisation_id=str(credential.organisation_id),
+            )
             raise RateLimitedError(decision.retry_after_seconds)
         now = utcnow()
         if credential.last_used_at is None or now - credential.last_used_at > timedelta(minutes=1):
@@ -147,15 +177,26 @@ class DeviceGatewayService:
     ) -> IngestResult:
         session = uow.session
         organisation_id = credential.organisation_id
+        if adapter_name not in self._adapters.names:
+            GATEWAY_REJECTIONS.labels("unregistered", "unknown_adapter").inc()
         adapter = self._adapters.get(adapter_name)
         try:
             event = adapter.normalise(payload)
         except ValidationFailedError:
-            GATEWAY_EVENTS.labels(adapter_name, "unknown", "invalid").inc()
+            GATEWAY_REJECTIONS.labels(adapter_name, "invalid_payload").inc()
+            log.warning(
+                "gateway.rejected",
+                adapter=adapter_name,
+                failure_category="invalid_payload",
+                organisation_id=str(organisation_id),
+            )
             await self._audit_rejection(
                 organisation_id, adapter_name, None, "invalid_payload", context
             )
             raise
+        GATEWAY_EVENTS_RECEIVED.labels(adapter_name, event.event_type.value).inc()
+        if event.event_type is DeviceEventType.SOS_BUTTON:
+            SOS_RECEIVED.labels(adapter_name).inc()
 
         canonical, digest = payload_digest(event)
         now = utcnow()
@@ -226,8 +267,16 @@ class DeviceGatewayService:
                 payload={"event_type": event.event_type.value},
             )
         )
+        log_fields = {
+            "adapter": adapter_name,
+            "event_id": event.event_id,
+            "event_type": event.event_type.value,
+            "organisation_id": str(organisation_id),
+            "incident_id": str(incident.id) if incident else None,
+            "outcome": outcome.outcome.value,
+        }
+        uow.after_commit(lambda: log.info("gateway.event_accepted", **log_fields))
         await uow.commit()
-        GATEWAY_EVENTS.labels(adapter_name, event.event_type.value, outcome.outcome.value).inc()
         return IngestResult(
             receipt_id=receipt_id,
             event_id=event.event_id,
@@ -255,9 +304,23 @@ class DeviceGatewayService:
         if existing is None:  # pragma: no cover - conflict implies the row exists
             raise ConflictError()
         if existing.payload_sha256 != digest:
-            GATEWAY_EVENTS.labels(adapter_name, event.event_type.value, "event_id_conflict").inc()
+            GATEWAY_REJECTIONS.labels(adapter_name, "event_id_conflict").inc()
+            log.warning(
+                "gateway.rejected",
+                adapter=adapter_name,
+                failure_category="event_id_conflict",
+                event_id=event.event_id,
+                organisation_id=str(organisation_id),
+            )
             raise EventIdConflictError()
-        GATEWAY_EVENTS.labels(adapter_name, event.event_type.value, "duplicate").inc()
+        GATEWAY_DUPLICATE_EVENTS.labels(adapter_name, event.event_type.value).inc()
+        log.info(
+            "gateway.duplicate_event",
+            adapter=adapter_name,
+            event_id=event.event_id,
+            organisation_id=str(organisation_id),
+            incident_id=str(existing.incident_id) if existing.incident_id else None,
+        )
         incident = (
             await session.get(Incident, existing.incident_id) if existing.incident_id else None
         )
@@ -309,7 +372,14 @@ class DeviceGatewayService:
         reason: str,
         context: AuditContext,
     ) -> NoReturn:
-        GATEWAY_EVENTS.labels(adapter_name, event.event_type.value, reason).inc()
+        GATEWAY_REJECTIONS.labels(adapter_name, reason).inc()
+        log.warning(
+            "gateway.rejected",
+            adapter=adapter_name,
+            failure_category=reason,
+            event_id=event.event_id,
+            organisation_id=str(organisation_id),
+        )
         await self._audit_rejection(organisation_id, adapter_name, event, reason, context)
         raise ValidationFailedError("Device event rejected.", details={"reason": reason})
 

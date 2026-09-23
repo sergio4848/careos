@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 
 from careos.api.deps import ContainerDep, SessionDep, require
+from careos.core.time import utcnow
 from careos.modules.devices.models import ConnectionStatus, Device, DeviceConnection
+from careos.modules.escalation_engine.models import ScheduledAction, ScheduledActionStatus
 from careos.modules.identity.principal import Principal
 from careos.modules.identity.rbac import Permission
 from careos.modules.incident_engine.models import Incident, IncidentPriority
@@ -27,6 +30,9 @@ class DashboardSummary(BaseModel):
     devices_online: int
     devices_offline: int
     low_battery: int
+    #: Escalation steps overdue beyond the worker lag threshold (worker down or saturated).
+    #: Non-zero means automated contact is delayed and operators must act manually.
+    escalation_overdue: int
 
 
 @router.get("/summary", response_model=DashboardSummary)
@@ -69,6 +75,24 @@ async def summary(
             .where(Device.organisation_id == org, Device.deleted_at.is_(None))
         )
     ).one()
+    cutoff = utcnow() - timedelta(seconds=container.settings.escalation_overdue_after_seconds)
+    escalation_overdue = await session.scalar(
+        select(func.count())
+        .select_from(ScheduledAction)
+        .where(
+            ScheduledAction.organisation_id == org,
+            or_(
+                and_(
+                    ScheduledAction.status == ScheduledActionStatus.PENDING,
+                    ScheduledAction.due_at < cutoff,
+                ),
+                and_(
+                    ScheduledAction.status == ScheduledActionStatus.RUNNING,
+                    ScheduledAction.lease_expires_at < cutoff,
+                ),
+            ),
+        )
+    )
     return DashboardSummary(
         active_incidents=incidents[0],
         critical=incidents[1],
@@ -77,4 +101,5 @@ async def summary(
         devices_online=devices[0],
         devices_offline=devices[1],
         low_battery=devices[2],
+        escalation_overdue=escalation_overdue or 0,
     )

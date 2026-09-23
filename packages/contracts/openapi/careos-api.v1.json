@@ -372,6 +372,10 @@
             "title": "Devices Online",
             "type": "integer"
           },
+          "escalation_overdue": {
+            "title": "Escalation Overdue",
+            "type": "integer"
+          },
           "low_battery": {
             "title": "Low Battery",
             "type": "integer"
@@ -388,7 +392,8 @@
           "awaiting_closure",
           "devices_online",
           "devices_offline",
-          "low_battery"
+          "low_battery",
+          "escalation_overdue"
         ],
         "title": "DashboardSummary",
         "type": "object"
@@ -1459,10 +1464,42 @@
             "title": "Database",
             "type": "string"
           },
-          "redis": {
+          "escalation_worker": {
+            "enum": [
+              "ok",
+              "lagging",
+              "unknown"
+            ],
+            "title": "Escalation Worker",
+            "type": "string"
+          },
+          "expected_schema_revision": {
+            "title": "Expected Schema Revision",
+            "type": "string"
+          },
+          "migrations": {
+            "enum": [
+              "current",
+              "ahead",
+              "outdated",
+              "unknown"
+            ],
+            "title": "Migrations",
+            "type": "string"
+          },
+          "realtime": {
             "enum": [
               "ok",
               "degraded",
+              "local_only"
+            ],
+            "title": "Realtime",
+            "type": "string"
+          },
+          "redis": {
+            "enum": [
+              "ok",
+              "unavailable",
               "not_configured"
             ],
             "title": "Redis",
@@ -1480,7 +1517,11 @@
         "required": [
           "status",
           "database",
-          "redis"
+          "migrations",
+          "expected_schema_revision",
+          "redis",
+          "realtime",
+          "escalation_worker"
         ],
         "title": "ReadinessStatus",
         "type": "object"
@@ -2426,7 +2467,6 @@
     },
     "/ready": {
       "get": {
-        "description": "Readiness: PostgreSQL is required. Redis only degrades realtime fan-out, so it is reported\nbut does not fail readiness (incident handling works without it).",
         "operationId": "ready_ready_get",
         "responses": {
           "200": {

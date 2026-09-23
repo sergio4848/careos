@@ -4,28 +4,32 @@ import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useConfig } from "../config";
-import { isRealtimeMessage, parseSocketMessage, queryKeysToInvalidate, reconnectDelay } from "./messages";
+import { RealtimeConnection, type ConnectionSnapshot, type ConnectionStatus } from "./connection";
+import { isRealtimeMessage, parseSocketMessage, queryKeysToInvalidate } from "./messages";
 
-export type RealtimeStatus = "connecting" | "live" | "reconnecting" | "unauthorised";
+export type RealtimeStatus = ConnectionStatus;
 
-interface RealtimeState {
-  status: RealtimeStatus;
+interface RealtimeState extends ConnectionSnapshot {
   /** Latest screen-reader announcement for new alarms. */
   announcement: string;
+  /** Reconnect now instead of waiting for the backoff timer. */
+  retryNow: () => void;
 }
 
-const RealtimeContext = createContext<RealtimeState>({ status: "connecting", announcement: "" });
+const INITIAL: ConnectionSnapshot = { status: "connecting", attempt: 0, nextRetryAt: null };
+
+const RealtimeContext = createContext<RealtimeState>({ ...INITIAL, announcement: "", retryNow: () => {} });
 
 export function useRealtimeStatus(): RealtimeState {
   return useContext(RealtimeContext);
 }
 
-const PING_INTERVAL_MS = 20_000;
-
 export function RealtimeProvider({ children, onUnauthorised }: { children: ReactNode; onUnauthorised?: () => void }) {
   const { wsUrl } = useConfig();
   const queryClient = useQueryClient();
-  const [state, setState] = useState<RealtimeState>({ status: "connecting", announcement: "" });
+  const [snapshot, setSnapshot] = useState<ConnectionSnapshot>(INITIAL);
+  const [announcement, setAnnouncement] = useState("");
+  const connectionRef = useRef<RealtimeConnection | null>(null);
   const unauthorisedRef = useRef(onUnauthorised);
 
   useEffect(() => {
@@ -33,63 +37,39 @@ export function RealtimeProvider({ children, onUnauthorised }: { children: React
   }, [onUnauthorised]);
 
   useEffect(() => {
-    let socket: WebSocket | null = null;
-    let attempt = 0;
-    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-    let pingTimer: ReturnType<typeof setInterval> | undefined;
-    let disposed = false;
-
-    const setStatus = (status: RealtimeStatus) => setState((prev) => ({ ...prev, status }));
-
-    const connect = () => {
-      setStatus(attempt === 0 ? "connecting" : "reconnecting");
-      socket = new WebSocket(wsUrl);
-
-      socket.onopen = () => {
-        attempt = 0;
-        setStatus("live");
-        // Anything could have happened while disconnected: refetch what is on screen.
-        void queryClient.invalidateQueries();
-        pingTimer = setInterval(() => socket?.readyState === WebSocket.OPEN && socket.send("ping"), PING_INTERVAL_MS);
-      };
-
-      socket.onmessage = (event: MessageEvent<string>) => {
-        const message = parseSocketMessage(event.data);
+    const connection = new RealtimeConnection({
+      url: wsUrl,
+      onSnapshot: setSnapshot,
+      // The socket is a notification channel: on every (re)connect, refetch from the API.
+      onOpen: () => void queryClient.invalidateQueries(),
+      onUnauthorised: () => unauthorisedRef.current?.(),
+      onMessage: (data) => {
+        const message = parseSocketMessage(data);
         if (!message || !isRealtimeMessage(message)) return;
         for (const queryKey of queryKeysToInvalidate(message)) {
           void queryClient.invalidateQueries({ queryKey });
         }
         if (message.type === "incident.created") {
           const priority = message.payload.priority ?? "NEW";
-          setState((prev) => ({
-            ...prev,
-            announcement: `New ${priority.toLowerCase()} incident ${message.payload.reference ?? ""} received`,
-          }));
+          setAnnouncement(`New ${priority.toLowerCase()} incident ${message.payload.reference ?? ""} received`);
         }
-      };
-
-      socket.onclose = (event) => {
-        clearInterval(pingTimer);
-        if (disposed) return;
-        if (event.code === 4401 || event.code === 4403) {
-          setStatus("unauthorised");
-          unauthorisedRef.current?.();
-          return;
-        }
-        setStatus("reconnecting");
-        reconnectTimer = setTimeout(connect, reconnectDelay(attempt));
-        attempt += 1;
-      };
-    };
-
-    connect();
+      },
+    });
+    connectionRef.current = connection;
+    connection.start();
+    const onOnline = () => connection.retryNow();
+    window.addEventListener("online", onOnline);
     return () => {
-      disposed = true;
-      clearTimeout(reconnectTimer);
-      clearInterval(pingTimer);
-      socket?.close(1000, "navigation");
+      window.removeEventListener("online", onOnline);
+      connection.stop();
+      connectionRef.current = null;
     };
   }, [wsUrl, queryClient]);
 
-  return <RealtimeContext.Provider value={state}>{children}</RealtimeContext.Provider>;
+  const value: RealtimeState = {
+    ...snapshot,
+    announcement,
+    retryNow: () => connectionRef.current?.retryNow(),
+  };
+  return <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>;
 }
