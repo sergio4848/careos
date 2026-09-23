@@ -416,31 +416,46 @@ class EscalationExecutor:
             trigger_type = incident.trigger_type
             await uow.commit()
 
-        # Phase 2a: optional AI assistance (never blocks or alters the deterministic flow)
-        if automated and self._ai.enabled:
-            await self._run_ai_assist(action, trigger_type)
-
-        # Phase 2b: provider call, outside any transaction
+        # Optional AI assistance runs alongside the call. It cannot delay, block or change the
+        # deterministic flow: the call is placed and its outcome recorded independently of it.
+        ai_task = (
+            asyncio.create_task(self._run_ai_assist_isolated(action, trigger_type))
+            if automated and self._ai.enabled
+            else None
+        )
         try:
-            async with asyncio.timeout(self._settings.provider_timeout_seconds):
-                result = await self._voice.place_call(
-                    VoiceCallRequest(
-                        organisation_id=action.organisation_id,
-                        incident_id=action.incident_id,
-                        call_id=call.id,
-                        to_number=target.phone,
-                        purpose="AUTOMATED_WELFARE_CHECK" if automated else "TRUSTED_CONTACT_ALERT",
+            # Phase 2: provider call, outside any transaction
+            try:
+                async with asyncio.timeout(self._settings.provider_timeout_seconds):
+                    result = await self._voice.place_call(
+                        VoiceCallRequest(
+                            organisation_id=action.organisation_id,
+                            incident_id=action.incident_id,
+                            call_id=call.id,
+                            to_number=target.phone,
+                            purpose=(
+                                "AUTOMATED_WELFARE_CHECK" if automated else "TRUSTED_CONTACT_ALERT"
+                            ),
+                        )
                     )
-                )
-        except (ProviderError, TimeoutError) as exc:
-            PROVIDER_CALLS.labels("voice", self._voice.name, "error").inc()
-            reason = "timeout" if isinstance(exc, TimeoutError) else "provider_error"
-            await self._handle_failure(action, error=reason, call_id=call.id)
-            return
-        PROVIDER_CALLS.labels("voice", self._voice.name, "ok").inc()
+            except (ProviderError, TimeoutError) as exc:
+                PROVIDER_CALLS.labels("voice", self._voice.name, "error").inc()
+                reason = "timeout" if isinstance(exc, TimeoutError) else "provider_error"
+                await self._handle_failure(action, error=reason, call_id=call.id)
+                return
+            PROVIDER_CALLS.labels("voice", self._voice.name, "ok").inc()
 
-        # Phase 3: record outcome
-        await self._record_call_result(action, call.id, target, result, automated)
+            # Phase 3: record outcome
+            await self._record_call_result(action, call.id, target, result, automated)
+        finally:
+            if ai_task is not None:
+                await ai_task
+
+    async def _run_ai_assist_isolated(self, action: ClaimedAction, trigger_type: str) -> None:
+        try:
+            await self._run_ai_assist(action, trigger_type)
+        except Exception:  # AI bookkeeping must never affect the deterministic escalation
+            log.exception("escalation.ai_assist_error", action_id=str(action.id))
 
     async def _record_call_result(
         self,

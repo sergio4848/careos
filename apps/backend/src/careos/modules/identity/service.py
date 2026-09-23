@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from careos.core.config import Settings
@@ -168,12 +168,21 @@ class AuthService:
             await session.execute(
                 select(UserSession, User)
                 .join(User, User.id == UserSession.user_id)
+                .outerjoin(Organisation, Organisation.id == User.organisation_id)
                 .where(
                     UserSession.token_digest == session_token_digest(self._secret, token),
                     UserSession.revoked_at.is_(None),
                     UserSession.expires_at > now,
                     User.deleted_at.is_(None),
                     User.is_active.is_(True),
+                    # A suspended or deleted tenant loses access immediately, not at next login.
+                    or_(
+                        User.organisation_id.is_(None),
+                        and_(
+                            Organisation.status == OrganisationStatus.ACTIVE,
+                            Organisation.deleted_at.is_(None),
+                        ),
+                    ),
                 )
             )
         ).one_or_none()

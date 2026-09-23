@@ -77,3 +77,17 @@ def test_status_groups_are_disjoint_and_consistent() -> None:
     for status in ACTIVE_STATUSES - {S.RECEIVED, S.VALIDATING}:
         # every active incident a human can see must be resolvable
         assert can_transition(status, S.RESOLVED) or can_transition(status, S.FALSE_ALARM)
+
+
+def test_incident_status_cannot_be_assigned_around_the_state_machine() -> None:
+    from careos.modules.incident_engine.models import Incident
+
+    incident = Incident(status=S.RECEIVED)
+    incident.status = S.VALIDATING  # legal
+    with pytest.raises(InvalidStateTransitionError):
+        incident.status = S.CLOSED  # VALIDATING -> CLOSED is not allowed
+
+    closed = Incident(status=S.CLOSED)
+    with pytest.raises(InvalidStateTransitionError):
+        closed.status = S.OPEN
+    assert closed.status is S.CLOSED

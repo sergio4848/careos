@@ -13,7 +13,9 @@ Regulators, insurers and safeguarding reviews expect a faithful record of who di
 * `careos/modules/incident_engine/state_machine.py` declares every status and its allowed
   targets in one table; `assert_transition` is the only gate. `IncidentEngine.transition` is the
   only function that assigns `incident.status`, and it always appends an `IncidentEvent` with
-  `from_status`/`to_status`.
+  `from_status`/`to_status`. As defence in depth, a SQLAlchemy `@validates("status")` hook on the
+  `Incident` model re-checks every assignment, so code that bypasses the engine still cannot make
+  an illegal change.
 * `RESOLVED` (outcome recorded) and `CLOSED` (reviewed, terminal) are distinct. Resolution
   requires a category and notes; closure requires a resolved/false-alarm/cancelled incident.
 * `FAILED` (automation failed) can only move towards human handling; it can never be closed
